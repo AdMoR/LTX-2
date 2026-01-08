@@ -239,13 +239,36 @@ def _find_matching_dir(root_path: str, pattern: str) -> str:
     return str(matches[0].parent)
 
 
-def module_ops_from_gemma_root(gemma_root: str) -> tuple[ModuleOps, ...]:
+def module_ops_from_gemma_root(
+    gemma_root: str,
+    device: torch.device | str = "cuda",
+) -> tuple[ModuleOps, ...]:
+    """
+    Create module operations for loading Gemma text encoder components.
+
+    Args:
+        gemma_root: Base path to Gemma model files.
+        device: Device to load the Gemma model on. Use "cpu" to load on CPU
+            (useful for systems with limited GPU memory). When loading on CPU,
+            float16 is used instead of bfloat16 for better compatibility.
+
+    Returns:
+        Tuple of ModuleOps for loading Gemma model and tokenizer.
+    """
     gemma_path = _find_matching_dir(gemma_root, "model*.safetensors")
     tokenizer_path = _find_matching_dir(gemma_root, "tokenizer.model")
 
+    # Convert string to torch.device if needed
+    torch_device = torch.device(device) if isinstance(device, str) else device
+    # Use float16 for CPU (bfloat16 not well supported on CPU), bfloat16 for GPU
+    dtype = torch.float16 if torch_device.type == "cpu" else torch.bfloat16
+
     def load_gemma(module: GemmaTextEncoderModelBase) -> GemmaTextEncoderModelBase:
         module.model = Gemma3ForConditionalGeneration.from_pretrained(
-            gemma_path, local_files_only=True, torch_dtype=torch.bfloat16
+            gemma_path,
+            local_files_only=True,
+            torch_dtype=dtype,
+            device_map=torch_device.type,
         )
         module._gemma_root = module._gemma_root or gemma_root
         return module

@@ -179,6 +179,13 @@ def basic_arg_parser() -> argparse.ArgumentParser:
         help="Enable FP8 mode to reduce memory footprint by keeping model in lower precision. "
         "Note that calculations are still performed in bfloat16 precision.",
     )
+    parser.add_argument(
+        "--text-encoder-cpu",
+        action="store_true",
+        help="Load the Gemma text encoder on CPU instead of GPU to save GPU memory. "
+        "This uses ~24GB of system RAM but frees ~12GB of GPU memory. "
+        "Useful for systems with limited GPU memory (e.g., 16GB VRAM).",
+    )
     parser.add_argument("--enhance-prompt", action="store_true")
     return parser
 

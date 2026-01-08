@@ -47,6 +47,7 @@ class TI2VidOneStagePipeline:
         loras: list[LoraPathStrengthAndSDOps],
         device: torch.device = device,
         fp8transformer: bool = False,
+        text_encoder_device: torch.device | str | None = None,
     ):
         self.dtype = torch.bfloat16
         self.device = device
@@ -57,6 +58,7 @@ class TI2VidOneStagePipeline:
             gemma_root_path=gemma_root,
             loras=loras,
             fp8transformer=fp8transformer,
+            text_encoder_device=text_encoder_device,
         )
         self.pipeline_components = PipelineComponents(
             dtype=self.dtype,
@@ -160,11 +162,13 @@ def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_1_stage_arg_parser()
     args = parser.parse_args()
+    text_encoder_device = "cpu" if args.text_encoder_cpu else None
     pipeline = TI2VidOneStagePipeline(
         checkpoint_path=args.checkpoint_path,
         gemma_root=args.gemma_root,
         loras=args.lora,
         fp8transformer=args.enable_fp8,
+        text_encoder_device=text_encoder_device,
     )
     video, audio = pipeline(
         prompt=args.prompt,

@@ -55,6 +55,7 @@ class TI2VidTwoStagesPipeline:
         loras: list[LoraPathStrengthAndSDOps],
         device: str = device,
         fp8transformer: bool = False,
+        text_encoder_device: torch.device | str | None = None,
     ):
         self.device = device
         self.dtype = torch.bfloat16
@@ -66,6 +67,7 @@ class TI2VidTwoStagesPipeline:
             spatial_upsampler_path=spatial_upsampler_path,
             loras=loras,
             fp8transformer=fp8transformer,
+            text_encoder_device=text_encoder_device,
         )
 
         self.stage_2_model_ledger = self.stage_1_model_ledger.with_loras(
@@ -238,6 +240,7 @@ def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_2_stage_arg_parser()
     args = parser.parse_args()
+    text_encoder_device = "cpu" if args.text_encoder_cpu else None
     pipeline = TI2VidTwoStagesPipeline(
         checkpoint_path=args.checkpoint_path,
         distilled_lora=args.distilled_lora,
@@ -245,6 +248,7 @@ def main() -> None:
         gemma_root=args.gemma_root,
         loras=args.lora,
         fp8transformer=args.enable_fp8,
+        text_encoder_device=text_encoder_device,
     )
     tiling_config = TilingConfig.default()
     video_chunks_number = get_video_chunks_number(args.num_frames, tiling_config)

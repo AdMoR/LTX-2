@@ -78,6 +78,11 @@ class ModelLedger:
         Defaults to :class:`DummyRegistry` which performs no cross-builder caching.
     fp8transformer:
         If ``True``, builds the transformer with FP8 quantization and upcasting during inference.
+    text_encoder_device:
+        Optional device for loading the text encoder. If ``None``, uses the same device as
+        other models. Set to ``"cpu"`` to load the text encoder on CPU, which saves GPU memory
+        (~24GB) at the cost of using system RAM. When loading on CPU, float16 is used instead
+        of bfloat16 for better compatibility.
     ### Creating Variants
     Use :meth:`with_loras` to create a new ``ModelLedger`` instance that includes
     additional LoRA configurations while sharing the same registry for weight caching.
@@ -93,6 +98,7 @@ class ModelLedger:
         loras: LoraPathStrengthAndSDOps | None = None,
         registry: Registry | None = None,
         fp8transformer: bool = False,
+        text_encoder_device: torch.device | str | None = None,
     ):
         self.dtype = dtype
         self.device = device
@@ -102,6 +108,13 @@ class ModelLedger:
         self.loras = loras or ()
         self.registry = registry or DummyRegistry()
         self.fp8transformer = fp8transformer
+        # Set text encoder device: convert string to device, default to main device
+        if text_encoder_device is None:
+            self.text_encoder_device = device
+        elif isinstance(text_encoder_device, str):
+            self.text_encoder_device = torch.device(text_encoder_device)
+        else:
+            self.text_encoder_device = text_encoder_device
         self.build_model_builders()
 
     def build_model_builders(self) -> None:
@@ -148,7 +161,10 @@ class ModelLedger:
                     model_class_configurator=AVGemmaTextEncoderModelConfigurator,
                     model_sd_ops=AV_GEMMA_TEXT_ENCODER_KEY_OPS,
                     registry=self.registry,
-                    module_ops=module_ops_from_gemma_root(self.gemma_root_path),
+                    module_ops=module_ops_from_gemma_root(
+                        self.gemma_root_path,
+                        device=self.text_encoder_device,
+                    ),
                 )
 
         if self.spatial_upsampler_path is not None:
@@ -174,6 +190,7 @@ class ModelLedger:
             loras=(*self.loras, *loras),
             registry=self.registry,
             fp8transformer=self.fp8transformer,
+            text_encoder_device=self.text_encoder_device,
         )
 
     def transformer(self) -> X0Model:
@@ -218,7 +235,14 @@ class ModelLedger:
                 "ModelLedger constructor."
             )
 
-        return self.text_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        # Use float16 for CPU (bfloat16 not well supported), bfloat16 for GPU
+        te_dtype = torch.float16 if self.text_encoder_device.type == "cpu" else self.dtype
+
+        return (
+            self.text_encoder_builder.build(device=self.text_encoder_device, dtype=te_dtype)
+            .to(self.text_encoder_device)
+            .eval()
+        )
 
     def audio_decoder(self) -> AudioDecoder:
         if not hasattr(self, "audio_decoder_builder"):
