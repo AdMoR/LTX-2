@@ -83,6 +83,11 @@ class ModelLedger:
         other models. Set to ``"cpu"`` to load the text encoder on CPU, which saves GPU memory
         (~24GB) at the cost of using system RAM. When loading on CPU, float16 is used instead
         of bfloat16 for better compatibility.
+    text_encoder_8bit:
+        If ``True``, loads the text encoder (Gemma) with 8-bit quantization using bitsandbytes.
+        This reduces VRAM usage from ~24GB to ~12GB. Requires CUDA (GPU) - not compatible with
+        ``text_encoder_device="cpu"``. Recommended for systems with 16GB VRAM when combined
+        with fp8transformer and sequential model loading.
     ### Creating Variants
     Use :meth:`with_loras` to create a new ``ModelLedger`` instance that includes
     additional LoRA configurations while sharing the same registry for weight caching.
@@ -99,6 +104,7 @@ class ModelLedger:
         registry: Registry | None = None,
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
+        text_encoder_8bit: bool = False,
     ):
         self.dtype = dtype
         self.device = device
@@ -108,6 +114,7 @@ class ModelLedger:
         self.loras = loras or ()
         self.registry = registry or DummyRegistry()
         self.fp8transformer = fp8transformer
+        self.text_encoder_8bit = text_encoder_8bit
         # Set text encoder device: convert string to device, default to main device
         if text_encoder_device is None:
             self.text_encoder_device = device
@@ -164,6 +171,7 @@ class ModelLedger:
                     module_ops=module_ops_from_gemma_root(
                         self.gemma_root_path,
                         device=self.text_encoder_device,
+                        quantize_8bit=self.text_encoder_8bit,
                     ),
                 )
 
@@ -191,6 +199,7 @@ class ModelLedger:
             registry=self.registry,
             fp8transformer=self.fp8transformer,
             text_encoder_device=self.text_encoder_device,
+            text_encoder_8bit=self.text_encoder_8bit,
         )
 
     def transformer(self) -> X0Model:
@@ -235,14 +244,24 @@ class ModelLedger:
                 "ModelLedger constructor."
             )
 
-        # Use float16 for CPU (bfloat16 not well supported), bfloat16 for GPU
-        te_dtype = torch.float16 if self.text_encoder_device.type == "cpu" else self.dtype
+        # With 8-bit quantization, bitsandbytes manages the dtype internally
+        # For CPU, use float16 (bfloat16 not well supported)
+        # Otherwise use the configured dtype
+        if self.text_encoder_8bit:
+            te_dtype = self.dtype  # bitsandbytes handles the quantization
+        elif self.text_encoder_device.type == "cpu":
+            te_dtype = torch.float16
+        else:
+            te_dtype = self.dtype
 
-        return (
-            self.text_encoder_builder.build(device=self.text_encoder_device, dtype=te_dtype)
-            .to(self.text_encoder_device)
-            .eval()
-        )
+        encoder = self.text_encoder_builder.build(device=self.text_encoder_device, dtype=te_dtype)
+
+        # With 8-bit quantization, model is already on GPU via device_map="auto"
+        # Don't call .to() which would break quantization
+        if not self.text_encoder_8bit:
+            encoder = encoder.to(self.text_encoder_device)
+
+        return encoder.eval()
 
     def audio_decoder(self) -> AudioDecoder:
         if not hasattr(self, "audio_decoder_builder"):

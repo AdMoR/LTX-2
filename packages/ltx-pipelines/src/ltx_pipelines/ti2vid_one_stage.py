@@ -48,6 +48,7 @@ class TI2VidOneStagePipeline:
         device: torch.device = device,
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
+        text_encoder_8bit: bool = False,
     ):
         self.dtype = torch.bfloat16
         self.device = device
@@ -59,6 +60,7 @@ class TI2VidOneStagePipeline:
             loras=loras,
             fp8transformer=fp8transformer,
             text_encoder_device=text_encoder_device,
+            text_encoder_8bit=text_encoder_8bit,
         )
         self.pipeline_components = PipelineComponents(
             dtype=self.dtype,
@@ -169,6 +171,7 @@ def main() -> None:
         loras=args.lora,
         fp8transformer=args.enable_fp8,
         text_encoder_device=text_encoder_device,
+        text_encoder_8bit=args.text_encoder_8bit,
     )
     video, audio = pipeline(
         prompt=args.prompt,

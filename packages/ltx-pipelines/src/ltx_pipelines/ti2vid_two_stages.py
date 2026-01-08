@@ -56,6 +56,7 @@ class TI2VidTwoStagesPipeline:
         device: str = device,
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
+        text_encoder_8bit: bool = False,
     ):
         self.device = device
         self.dtype = torch.bfloat16
@@ -68,6 +69,7 @@ class TI2VidTwoStagesPipeline:
             loras=loras,
             fp8transformer=fp8transformer,
             text_encoder_device=text_encoder_device,
+            text_encoder_8bit=text_encoder_8bit,
         )
 
         self.stage_2_model_ledger = self.stage_1_model_ledger.with_loras(
@@ -249,6 +251,7 @@ def main() -> None:
         loras=args.lora,
         fp8transformer=args.enable_fp8,
         text_encoder_device=text_encoder_device,
+        text_encoder_8bit=args.text_encoder_8bit,
     )
     tiling_config = TilingConfig.default()
     video_chunks_number = get_video_chunks_number(args.num_frames, tiling_config)
