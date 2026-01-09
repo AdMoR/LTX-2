@@ -105,6 +105,7 @@ class ModelLedger:
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
         text_encoder_8bit: bool = False,
+        text_encoder_4bit: bool = False,
     ):
         self.dtype = dtype
         self.device = device
@@ -115,6 +116,7 @@ class ModelLedger:
         self.registry = registry or DummyRegistry()
         self.fp8transformer = fp8transformer
         self.text_encoder_8bit = text_encoder_8bit
+        self.text_encoder_4bit = text_encoder_4bit
         # Set text encoder device: convert string to device, default to main device
         if text_encoder_device is None:
             self.text_encoder_device = device
@@ -172,6 +174,7 @@ class ModelLedger:
                         self.gemma_root_path,
                         device=self.text_encoder_device,
                         quantize_8bit=self.text_encoder_8bit,
+                        quantize_4bit=self.text_encoder_4bit,
                     ),
                 )
 
@@ -200,6 +203,7 @@ class ModelLedger:
             fp8transformer=self.fp8transformer,
             text_encoder_device=self.text_encoder_device,
             text_encoder_8bit=self.text_encoder_8bit,
+            text_encoder_4bit=self.text_encoder_4bit,
         )
 
     def transformer(self) -> X0Model:
@@ -244,10 +248,11 @@ class ModelLedger:
                 "ModelLedger constructor."
             )
 
-        # With 8-bit quantization, bitsandbytes manages the dtype internally
+        # With quantization, bitsandbytes manages the dtype internally
         # For CPU, use float16 (bfloat16 not well supported)
         # Otherwise use the configured dtype
-        if self.text_encoder_8bit:
+        use_quantization = self.text_encoder_8bit or self.text_encoder_4bit
+        if use_quantization:
             te_dtype = self.dtype  # bitsandbytes handles the quantization
         elif self.text_encoder_device.type == "cpu":
             te_dtype = torch.float16
@@ -256,9 +261,9 @@ class ModelLedger:
 
         encoder = self.text_encoder_builder.build(device=self.text_encoder_device, dtype=te_dtype)
 
-        # With 8-bit quantization, model is already on GPU via device_map="auto"
+        # With quantization, model is already on GPU via device_map="auto"
         # Don't call .to() which would break quantization
-        if not self.text_encoder_8bit:
+        if not use_quantization:
             encoder = encoder.to(self.text_encoder_device)
 
         return encoder.eval()

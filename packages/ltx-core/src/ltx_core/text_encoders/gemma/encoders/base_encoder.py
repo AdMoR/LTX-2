@@ -243,6 +243,7 @@ def module_ops_from_gemma_root(
     gemma_root: str,
     device: torch.device | str = "cuda",
     quantize_8bit: bool = False,
+    quantize_4bit: bool = False,
 ) -> tuple[ModuleOps, ...]:
     """
     Create module operations for loading Gemma text encoder components.
@@ -255,6 +256,9 @@ def module_ops_from_gemma_root(
         quantize_8bit: If True, load the model with 8-bit quantization using
             bitsandbytes. This reduces VRAM usage from ~24GB to ~12GB.
             Requires CUDA (GPU) - not supported on CPU.
+        quantize_4bit: If True, load the model with 4-bit quantization using
+            bitsandbytes NF4. This reduces VRAM usage from ~24GB to ~6GB.
+            Requires CUDA (GPU) - not supported on CPU. Cannot be combined with quantize_8bit.
 
     Returns:
         Tuple of ModuleOps for loading Gemma model and tokenizer.
@@ -265,22 +269,36 @@ def module_ops_from_gemma_root(
     # Convert string to torch.device if needed
     torch_device = torch.device(device) if isinstance(device, str) else device
 
-    # 8-bit quantization requires GPU
-    if quantize_8bit and torch_device.type == "cpu":
-        raise ValueError("8-bit quantization requires CUDA (GPU). Cannot use quantize_8bit=True with device='cpu'.")
+    # Validate quantization options
+    if quantize_8bit and quantize_4bit:
+        raise ValueError("Cannot use both quantize_8bit and quantize_4bit. Choose one.")
+    if (quantize_8bit or quantize_4bit) and torch_device.type == "cpu":
+        raise ValueError("Quantization requires CUDA (GPU). Cannot use quantization with device='cpu'.")
 
     # Use float16 for CPU (bfloat16 not well supported on CPU), bfloat16 for GPU
     dtype = torch.float16 if torch_device.type == "cpu" else torch.bfloat16
 
     # Configure quantization if requested
-    quantization_config = BitsAndBytesConfig(load_in_8bit=True) if quantize_8bit else None
+    if quantize_4bit:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+    elif quantize_8bit:
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+    else:
+        quantization_config = None
+
+    use_quantization = quantize_8bit or quantize_4bit
 
     def load_gemma(module: GemmaTextEncoderModelBase) -> GemmaTextEncoderModelBase:
         module.model = Gemma3ForConditionalGeneration.from_pretrained(
             gemma_path,
             local_files_only=True,
             torch_dtype=dtype,
-            device_map="auto" if quantize_8bit else torch_device.type,
+            device_map="auto" if use_quantization else torch_device.type,
             quantization_config=quantization_config,
         )
         module._gemma_root = module._gemma_root or gemma_root

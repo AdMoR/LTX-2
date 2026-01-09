@@ -57,6 +57,7 @@ class ICLoraPipeline:
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
         text_encoder_8bit: bool = False,
+        text_encoder_4bit: bool = False,
     ):
         self.dtype = torch.bfloat16
         self.stage_1_model_ledger = ModelLedger(
@@ -69,6 +70,7 @@ class ICLoraPipeline:
             fp8transformer=fp8transformer,
             text_encoder_device=text_encoder_device,
             text_encoder_8bit=text_encoder_8bit,
+            text_encoder_4bit=text_encoder_4bit,
         )
         self.stage_2_model_ledger = ModelLedger(
             dtype=self.dtype,
@@ -80,6 +82,7 @@ class ICLoraPipeline:
             fp8transformer=fp8transformer,
             text_encoder_device=text_encoder_device,
             text_encoder_8bit=text_encoder_8bit,
+            text_encoder_4bit=text_encoder_4bit,
         )
         self.pipeline_components = PipelineComponents(
             dtype=self.dtype,
@@ -289,6 +292,7 @@ def main() -> None:
         fp8transformer=args.enable_fp8,
         text_encoder_device=text_encoder_device,
         text_encoder_8bit=args.text_encoder_8bit,
+        text_encoder_4bit=args.text_encoder_4bit,
     )
     tiling_config = TilingConfig.default()
     video_chunks_number = get_video_chunks_number(args.num_frames, tiling_config)

@@ -191,7 +191,15 @@ def basic_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Load the Gemma text encoder with 8-bit quantization to reduce GPU memory. "
         "This reduces VRAM usage from ~24GB to ~12GB. Requires bitsandbytes library. "
-        "Cannot be combined with --text-encoder-cpu. Recommended for 16GB VRAM systems.",
+        "Cannot be combined with --text-encoder-cpu or --text-encoder-4bit.",
+    )
+    parser.add_argument(
+        "--text-encoder-4bit",
+        action="store_true",
+        help="Load the Gemma text encoder with 4-bit NF4 quantization to reduce GPU memory. "
+        "This reduces VRAM usage from ~24GB to ~6GB. Requires bitsandbytes library. "
+        "Cannot be combined with --text-encoder-cpu or --text-encoder-8bit. "
+        "Recommended for systems with limited GPU memory (e.g., 12-16GB VRAM).",
     )
     parser.add_argument("--enhance-prompt", action="store_true")
     return parser
