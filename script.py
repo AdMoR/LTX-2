@@ -102,6 +102,8 @@ def run_video_to_video(
     frame_rate: float = 25.0,
     conditioning_strength: float = 0.8,
     ic_lora_type: str = "depth",  # "depth" or "canny"
+    text_encoder_4bit: bool = False,
+    text_encoder_8bit: bool = False,
 ) -> None:
     """Run video-to-video generation with IC-LoRA."""
     from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
@@ -120,6 +122,8 @@ def run_video_to_video(
     print(f"Frames: {num_frames} @ {frame_rate} fps")
     print(f"IC-LoRA: {ic_lora_type}")
     print(f"Conditioning strength: {conditioning_strength}")
+    te_mode = "4-bit" if text_encoder_4bit else "8-bit" if text_encoder_8bit else "full precision"
+    print(f"Text encoder: {te_mode}")
     print(f"Seed: {seed}")
     print(f"{'=' * 60}\n")
 
@@ -134,14 +138,15 @@ def run_video_to_video(
         sd_ops=LTXV_LORA_COMFY_RENAMING_MAP,
     )
 
-    print("Loading pipeline with FP8 transformer...")
+    print(f"Loading pipeline with FP8 transformer and {te_mode} text encoder...")
     pipeline = ICLoraPipeline(
         checkpoint_path=str(model_paths["checkpoint"]),
         spatial_upsampler_path=str(model_paths["upsampler"]),
         gemma_root=str(model_paths["gemma"]),
         loras=[lora],
-        fp8transformer=True,  # CRITICAL: Enable FP8 for 16GB VRAM
-        #text_encoder_device="cpu"
+        fp8transformer=True,  # Enable FP8 for transformer (~10GB VRAM)
+        text_encoder_4bit=text_encoder_4bit,  # 4-bit: ~6GB VRAM
+        text_encoder_8bit=text_encoder_8bit,  # 8-bit: ~12GB VRAM
     )
 
     print("Running inference...")
@@ -226,8 +231,22 @@ def main() -> None:
         default="depth",
         help="IC-LoRA type for video conditioning",
     )
+    parser.add_argument(
+        "--text-encoder-4bit",
+        action="store_true",
+        help="Use 4-bit NF4 quantization for Gemma text encoder (~6GB VRAM). Recommended for 16GB systems.",
+    )
+    parser.add_argument(
+        "--text-encoder-8bit",
+        action="store_true",
+        help="Use 8-bit quantization for Gemma text encoder (~12GB VRAM).",
+    )
 
     args = parser.parse_args()
+
+    # Validate mutually exclusive options
+    if args.text_encoder_4bit and args.text_encoder_8bit:
+        parser.error("Cannot use both --text-encoder-4bit and --text-encoder-8bit")
 
     # Check CUDA availability
     if not torch.cuda.is_available():
@@ -261,6 +280,8 @@ def main() -> None:
         frame_rate=args.frame_rate,
         conditioning_strength=args.conditioning_strength,
         ic_lora_type=args.ic_lora_type,
+        text_encoder_4bit=args.text_encoder_4bit,
+        text_encoder_8bit=args.text_encoder_8bit,
     )
 
 
