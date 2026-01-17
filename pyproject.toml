@@ -10,6 +10,11 @@ members = ["packages/*"]
 name = "pypi"
 url = "https://pypi.org/simple"
 
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
 [dependency-groups]
 dev = [
     "pre-commit>=4.3.0",
