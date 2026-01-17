@@ -20,7 +20,7 @@ services:
   ltx-server:
     build:
       context: .
-      dockerfile: packages/ltx-server/Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
