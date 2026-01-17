@@ -1,6 +1,7 @@
 [tool.uv.sources]
 ltx-core = { workspace = true }
 ltx-pipelines = { workspace = true }
+ltx-server = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -59,4 +60,4 @@ ignore = [
 max-args = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["ltx_core", "ltx_pipelines", "ltx_trainer"]
+known-first-party = ["ltx_core", "ltx_pipelines", "ltx_trainer", "ltx_server"]

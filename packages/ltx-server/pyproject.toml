@@ -1,0 +1,22 @@
+[project]
+name = "ltx-server"
+version = "1.0.0"
+description = "FastAPI server for LTX-2 video generation pipelines"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ltx-pipelines",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]",
+    "python-multipart",
+    "boto3",
+    "pydantic>=2.0",
+    "pydantic-settings",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
+
+[project.scripts]
+ltx-server = "ltx_server.main:run"
