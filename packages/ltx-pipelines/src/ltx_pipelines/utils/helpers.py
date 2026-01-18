@@ -46,14 +46,21 @@ def get_tensor_memory_mb(tensor: torch.Tensor) -> float:
     return tensor.element_size() * tensor.numel() / 1024**2
 
 
-def get_gpu_memory_gb() -> tuple[float, float, float]:
-    """Get GPU memory usage in GB. Returns (allocated, reserved, total)."""
+def get_gpu_memory_gb() -> tuple[float, float, float, float]:
+    """Get GPU memory usage in GB. Returns (pytorch_allocated, pytorch_reserved, vram_used, total)."""
     if not torch.cuda.is_available():
-        return 0.0, 0.0, 0.0
-    allocated = torch.cuda.memory_allocated() / 1024**3
-    reserved = torch.cuda.memory_reserved() / 1024**3
-    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    return allocated, reserved, total
+        return 0.0, 0.0, 0.0, 0.0
+    
+    # PyTorch's view of memory (only tracks PyTorch allocations)
+    pytorch_allocated = torch.cuda.memory_allocated() / 1024**3
+    pytorch_reserved = torch.cuda.memory_reserved() / 1024**3
+    
+    # Actual VRAM usage (like nvidia-smi, includes bitsandbytes, CUDA context, etc.)
+    free, total = torch.cuda.mem_get_info()
+    vram_used = (total - free) / 1024**3
+    total_gb = total / 1024**3
+    
+    return pytorch_allocated, pytorch_reserved, vram_used, total_gb
 
 
 def log_tensor(name: str, tensor: torch.Tensor) -> None:
@@ -65,8 +72,8 @@ def log_tensor(name: str, tensor: torch.Tensor) -> None:
 
 def log_gpu_memory(stage: str) -> None:
     """Log current GPU memory usage."""
-    allocated, reserved, total = get_gpu_memory_gb()
-    logger.info(f"  💾 GPU Memory [{stage}]: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved / {total:.2f}GB total")
+    pytorch_alloc, pytorch_res, vram_used, total = get_gpu_memory_gb()
+    logger.info(f"  💾 Memory [{stage}]: PyTorch={pytorch_alloc:.2f}GB, VRAM={vram_used:.2f}GB/{total:.2f}GB")
 
 
 def log_generation_stage(stage: str, tensors: dict[str, torch.Tensor | Any] | None = None) -> None:

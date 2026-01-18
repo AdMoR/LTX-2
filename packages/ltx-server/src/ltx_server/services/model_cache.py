@@ -44,22 +44,69 @@ from ltx_core.text_encoders.gemma import (
 logger = logging.getLogger(__name__)
 
 
-def _get_gpu_memory_info() -> tuple[float, float, float]:
-    """Get GPU memory usage in GB. Returns (allocated, reserved, total)."""
+def _get_gpu_memory_info() -> tuple[float, float, float, float]:
+    """Get GPU memory usage in GB. Returns (pytorch_allocated, pytorch_reserved, vram_used, total)."""
     if not torch.cuda.is_available():
-        return 0.0, 0.0, 0.0
-    allocated = torch.cuda.memory_allocated() / 1024**3
-    reserved = torch.cuda.memory_reserved() / 1024**3
-    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    return allocated, reserved, total
+        return 0.0, 0.0, 0.0, 0.0
+    
+    # PyTorch's view of memory (only tracks PyTorch allocations)
+    pytorch_allocated = torch.cuda.memory_allocated() / 1024**3
+    pytorch_reserved = torch.cuda.memory_reserved() / 1024**3
+    
+    # Actual VRAM usage (like nvidia-smi, includes bitsandbytes, CUDA context, etc.)
+    free, total = torch.cuda.mem_get_info()
+    vram_used = (total - free) / 1024**3
+    total_gb = total / 1024**3
+    
+    return pytorch_allocated, pytorch_reserved, vram_used, total_gb
 
 
-def _log_memory(model_name: str) -> None:
-    """Log GPU memory usage after loading a model."""
-    allocated, reserved, total = _get_gpu_memory_info()
+def _get_model_dtype_info(model: torch.nn.Module) -> dict[str, int]:
+    """Get dtype distribution of model parameters."""
+    dtype_counts: dict[str, int] = {}
+    for param in model.parameters():
+        dtype_name = str(param.dtype).replace("torch.", "")
+        dtype_counts[dtype_name] = dtype_counts.get(dtype_name, 0) + param.numel()
+    return dtype_counts
+
+
+def _format_dtype_info(dtype_counts: dict[str, int]) -> str:
+    """Format dtype counts as a readable string with percentages."""
+    total = sum(dtype_counts.values())
+    if total == 0:
+        return "no parameters"
+    
+    parts = []
+    for dtype, count in sorted(dtype_counts.items(), key=lambda x: -x[1]):
+        pct = 100 * count / total
+        if pct >= 1.0:  # Only show dtypes with >= 1%
+            parts.append(f"{dtype}: {pct:.1f}%")
+    return ", ".join(parts) if parts else "unknown"
+
+
+def _get_model_device(model: torch.nn.Module) -> str:
+    """Get the device of a model's first parameter."""
+    for param in model.parameters():
+        return str(param.device)
+    return "unknown"
+
+
+def _log_model_info(model_name: str, model: torch.nn.Module) -> None:
+    """Log model info including device, precision, and memory usage."""
+    pytorch_alloc, pytorch_res, vram_used, total = _get_gpu_memory_info()
+    dtype_info = _get_model_dtype_info(model)
+    dtype_str = _format_dtype_info(dtype_info)
+    device_str = _get_model_device(model)
+    
+    # Calculate model size in MB
+    param_count = sum(p.numel() for p in model.parameters())
+    param_size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1024**2
+    
     logger.info(
-        f"  → {model_name} loaded | "
-        f"GPU Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved / {total:.2f}GB total"
+        f"  ✓ {model_name} loaded | "
+        f"device={device_str}, precision=[{dtype_str}], "
+        f"params={param_count/1e6:.1f}M, size={param_size_mb:.1f}MB | "
+        f"PyTorch: {pytorch_alloc:.2f}GB alloc, VRAM: {vram_used:.2f}GB/{total:.2f}GB"
     )
 
 
@@ -197,39 +244,42 @@ class SharedModelCache:
 
     def _load_shared_models(self) -> None:
         """Load all shared models into memory."""
-        initial_allocated, _, total = _get_gpu_memory_info()
-        logger.info(f"Starting model loading (GPU: {initial_allocated:.2f}GB / {total:.2f}GB)")
+        initial_pytorch, _, initial_vram, total = _get_gpu_memory_info()
+        logger.info(f"Starting model loading (VRAM: {initial_vram:.2f}GB / {total:.2f}GB)")
+        logger.info(f"Configuration: fp8_transformer={self.fp8transformer}, "
+                    f"text_encoder_8bit={self.text_encoder_8bit}, "
+                    f"text_encoder_4bit={self.text_encoder_4bit}")
 
         # Load text encoder
         logger.info("Loading text encoder...")
         self._text_encoder = self._build_text_encoder()
-        _log_memory("Text encoder")
+        _log_model_info("Text encoder", self._text_encoder)
 
         # Load video VAE
         logger.info("Loading video encoder...")
         self._video_encoder = self._vae_encoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
-        _log_memory("Video encoder")
+        _log_model_info("Video encoder", self._video_encoder)
 
         logger.info("Loading video decoder...")
         self._video_decoder = self._vae_decoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
-        _log_memory("Video decoder")
+        _log_model_info("Video decoder", self._video_decoder)
 
         # Load audio components
         logger.info("Loading audio decoder...")
         self._audio_decoder = self._audio_decoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
-        _log_memory("Audio decoder")
+        _log_model_info("Audio decoder", self._audio_decoder)
 
         logger.info("Loading vocoder...")
         self._vocoder = self._vocoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
-        _log_memory("Vocoder")
+        _log_model_info("Vocoder", self._vocoder)
 
         # Load spatial upsampler (optional)
         if self.spatial_upsampler_path is not None:
@@ -237,29 +287,29 @@ class SharedModelCache:
             self._spatial_upsampler = self._upsampler_builder.build(
                 device=self.device, dtype=self.dtype
             ).to(self.device).eval()
-            _log_memory("Spatial upsampler")
+            _log_model_info("Spatial upsampler", self._spatial_upsampler)
         else:
             self._spatial_upsampler = None
 
         # Pre-build transformer variants
         logger.info("Loading base transformer (no LoRA)...")
         self._transformer_base = self._build_transformer(loras=())
-        _log_memory("Base transformer")
+        _log_model_info("Base transformer", self._transformer_base)
 
         if self.distilled_lora_path is not None:
             logger.info("Loading distilled transformer...")
             distilled_lora = (LoraPathStrengthAndSDOps(self.distilled_lora_path, 1.0, {}),)
             self._transformer_distilled = self._build_transformer(loras=distilled_lora)
-            _log_memory("Distilled transformer")
+            _log_model_info("Distilled transformer", self._transformer_distilled)
         else:
             self._transformer_distilled = None
 
         # Final summary
-        final_allocated, final_reserved, total = _get_gpu_memory_info()
+        final_pytorch, final_reserved, final_vram, total = _get_gpu_memory_info()
         logger.info(
-            f"Model loading complete | "
-            f"Total GPU Memory: {final_allocated:.2f}GB allocated, {final_reserved:.2f}GB reserved / {total:.2f}GB total | "
-            f"Models used: {final_allocated - initial_allocated:.2f}GB"
+            f"✅ Model loading complete | "
+            f"PyTorch: {final_pytorch:.2f}GB alloc (+{final_pytorch - initial_pytorch:.2f}GB) | "
+            f"VRAM: {final_vram:.2f}GB/{total:.2f}GB (+{final_vram - initial_vram:.2f}GB)"
         )
 
     def _build_text_encoder(self) -> AVGemmaTextEncoderModel:
