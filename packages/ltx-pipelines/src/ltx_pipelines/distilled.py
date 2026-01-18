@@ -188,7 +188,9 @@ class DistilledPipeline:
         torch.cuda.synchronize()
         cleanup_memory()
 
-        decoded_video = vae_decode_video(video_state.latent, self.model_ledger.video_decoder(), tiling_config)
+        decoded_video = vae_decode_video(
+            video_state.latent, self.model_ledger.video_decoder(), tiling_config, generator
+        )
         decoded_audio = vae_decode_audio(
             audio_state.latent, self.model_ledger.audio_decoder(), self.model_ledger.vocoder()
         )
