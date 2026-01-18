@@ -1,7 +1,0 @@
-certifi==2025.1.31
-packaging==24.1
-pip @ file:///opt/homebrew/Cellar/python%403.13/3.13.0_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/ensurepip/_bundled/pip-24.2-py3-none-any.whl
-pip==25.0.1
-tbb==0.2
-wheel @ file:///opt/homebrew/Cellar/python%403.13/3.13.0_1/libexec/wheel-0.44.0-py3-none-any.whl
-wheel==0.45.1
