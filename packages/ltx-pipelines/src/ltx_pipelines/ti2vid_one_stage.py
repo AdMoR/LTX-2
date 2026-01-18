@@ -26,6 +26,7 @@ from ltx_pipelines.utils.helpers import (
     get_device,
     guider_denoising_func,
     image_conditionings_by_replacing_latent,
+    log_generation_stage,
 )
 from ltx_pipelines.utils.media_io import encode_video
 from ltx_pipelines.utils.types import PipelineComponents
@@ -154,6 +155,8 @@ class TI2VidOneStagePipeline:
         audio_decoder = models["audio_decoder"]
         vocoder = models["vocoder"]
 
+        log_generation_stage("Starting generation")
+
         if enhance_prompt:
             prompt = generate_enhanced_prompt(
                 text_encoder, prompt, images[0][0] if len(images) > 0 else None, seed=seed
@@ -161,6 +164,13 @@ class TI2VidOneStagePipeline:
         context_p, context_n = encode_text(text_encoder, prompts=[prompt, negative_prompt])
         v_context_p, a_context_p = context_p
         v_context_n, a_context_n = context_n
+
+        log_generation_stage("Text encoding complete", {
+            "v_context_p": v_context_p,
+            "v_context_n": v_context_n,
+            "a_context_p": a_context_p,
+            "a_context_n": a_context_n,
+        })
 
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
@@ -211,14 +221,23 @@ class TI2VidOneStagePipeline:
             device=self.device,
         )
 
+        log_generation_stage("Denoising complete", {
+            "video_latent": video_state.latent,
+            "audio_latent": audio_state.latent,
+        })
+
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del transformer
             cleanup_memory()
 
+        log_generation_stage("Starting VAE decode")
         decoded_video = vae_decode_video(video_state.latent, video_decoder)
+        log_generation_stage("Video VAE decode complete")
+
         decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
+        log_generation_stage("Audio decode complete")
 
         return decoded_video, decoded_audio
 

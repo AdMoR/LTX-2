@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
+from ltx_core.model.video_vae import TilingConfig
 from ltx_server.models.responses import JobResponse
 from ltx_server.services.media import process_image_uploads, process_video_conditioning_upload
 
@@ -94,6 +95,7 @@ async def generate_ti2vid_two_stages(
         "num_inference_steps": num_inference_steps,
         "cfg_guidance_scale": cfg_guidance_scale,
         "enhance_prompt": enhance_prompt,
+        "tiling_config": TilingConfig.default(),
     }
 
     return await _submit_job(request, pipeline_name, params, image_conditions)
@@ -130,6 +132,7 @@ async def generate_distilled(
         "num_frames": num_frames,
         "frame_rate": frame_rate,
         "enhance_prompt": enhance_prompt,
+        "tiling_config": TilingConfig.default(),
     }
 
     return await _submit_job(request, pipeline_name, params, image_conditions)
@@ -171,6 +174,7 @@ async def generate_ic_lora(
         "num_frames": num_frames,
         "frame_rate": frame_rate,
         "enhance_prompt": enhance_prompt,
+        "tiling_config": TilingConfig.default(),
     }
 
     return await _submit_job(
@@ -215,6 +219,7 @@ async def generate_keyframe_interpolation(
         "num_inference_steps": num_inference_steps,
         "cfg_guidance_scale": cfg_guidance_scale,
         "enhance_prompt": enhance_prompt,
+        "tiling_config": TilingConfig.default(),
     }
 
     return await _submit_job(request, pipeline_name, params, image_conditions)

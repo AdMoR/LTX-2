@@ -44,6 +44,25 @@ from ltx_core.text_encoders.gemma import (
 logger = logging.getLogger(__name__)
 
 
+def _get_gpu_memory_info() -> tuple[float, float, float]:
+    """Get GPU memory usage in GB. Returns (allocated, reserved, total)."""
+    if not torch.cuda.is_available():
+        return 0.0, 0.0, 0.0
+    allocated = torch.cuda.memory_allocated() / 1024**3
+    reserved = torch.cuda.memory_reserved() / 1024**3
+    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    return allocated, reserved, total
+
+
+def _log_memory(model_name: str) -> None:
+    """Log GPU memory usage after loading a model."""
+    allocated, reserved, total = _get_gpu_memory_info()
+    logger.info(
+        f"  → {model_name} loaded | "
+        f"GPU Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved / {total:.2f}GB total"
+    )
+
+
 class SharedModelCache:
     """
     Centralized cache for all models used by LTX pipelines.
@@ -178,31 +197,39 @@ class SharedModelCache:
 
     def _load_shared_models(self) -> None:
         """Load all shared models into memory."""
+        initial_allocated, _, total = _get_gpu_memory_info()
+        logger.info(f"Starting model loading (GPU: {initial_allocated:.2f}GB / {total:.2f}GB)")
+
         # Load text encoder
         logger.info("Loading text encoder...")
         self._text_encoder = self._build_text_encoder()
+        _log_memory("Text encoder")
 
         # Load video VAE
         logger.info("Loading video encoder...")
         self._video_encoder = self._vae_encoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
+        _log_memory("Video encoder")
 
         logger.info("Loading video decoder...")
         self._video_decoder = self._vae_decoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
+        _log_memory("Video decoder")
 
         # Load audio components
         logger.info("Loading audio decoder...")
         self._audio_decoder = self._audio_decoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
+        _log_memory("Audio decoder")
 
         logger.info("Loading vocoder...")
         self._vocoder = self._vocoder_builder.build(
             device=self.device, dtype=self.dtype
         ).to(self.device).eval()
+        _log_memory("Vocoder")
 
         # Load spatial upsampler (optional)
         if self.spatial_upsampler_path is not None:
@@ -210,19 +237,30 @@ class SharedModelCache:
             self._spatial_upsampler = self._upsampler_builder.build(
                 device=self.device, dtype=self.dtype
             ).to(self.device).eval()
+            _log_memory("Spatial upsampler")
         else:
             self._spatial_upsampler = None
 
         # Pre-build transformer variants
         logger.info("Loading base transformer (no LoRA)...")
         self._transformer_base = self._build_transformer(loras=())
+        _log_memory("Base transformer")
 
         if self.distilled_lora_path is not None:
             logger.info("Loading distilled transformer...")
             distilled_lora = (LoraPathStrengthAndSDOps(self.distilled_lora_path, 1.0, {}),)
             self._transformer_distilled = self._build_transformer(loras=distilled_lora)
+            _log_memory("Distilled transformer")
         else:
             self._transformer_distilled = None
+
+        # Final summary
+        final_allocated, final_reserved, total = _get_gpu_memory_info()
+        logger.info(
+            f"Model loading complete | "
+            f"Total GPU Memory: {final_allocated:.2f}GB allocated, {final_reserved:.2f}GB reserved / {total:.2f}GB total | "
+            f"Models used: {final_allocated - initial_allocated:.2f}GB"
+        )
 
     def _build_text_encoder(self) -> AVGemmaTextEncoderModel:
         """Build the text encoder with proper dtype handling."""
@@ -340,6 +378,7 @@ class SharedModelCache:
                 self._lora_transformer_cache[cache_key] = self._build_transformer(
                     loras=tuple(loras)
                 )
+                _log_memory(f"Transformer with LoRAs ({cache_key})")
             return self._lora_transformer_cache[cache_key]
 
     @property

@@ -30,6 +30,7 @@ from ltx_pipelines.utils.helpers import (
     generate_enhanced_prompt,
     get_device,
     image_conditionings_by_replacing_latent,
+    log_generation_stage,
     simple_denoising_func,
 )
 from ltx_pipelines.utils.media_io import encode_video, load_video_conditioning
@@ -179,11 +180,18 @@ class ICLoraPipeline:
         audio_decoder = models["audio_decoder"]
         vocoder = models["vocoder"]
 
+        log_generation_stage("Starting generation")
+
         if enhance_prompt:
             prompt = generate_enhanced_prompt(
                 text_encoder, prompt, images[0][0] if len(images) > 0 else None, seed=seed
             )
         video_context, audio_context = encode_text(text_encoder, prompts=[prompt])[0]
+
+        log_generation_stage("Text encoding complete", {
+            "video_context": video_context,
+            "audio_context": audio_context,
+        })
 
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
@@ -236,6 +244,11 @@ class ICLoraPipeline:
             device=self.device,
         )
 
+        log_generation_stage("Stage 1 denoising complete", {
+            "video_latent": video_state.latent,
+            "audio_latent": audio_state.latent,
+        })
+
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del transformer_stage1
@@ -247,6 +260,10 @@ class ICLoraPipeline:
             video_encoder=video_encoder,
             upsampler=spatial_upsampler,
         )
+
+        log_generation_stage("Spatial upsampling complete", {
+            "upscaled_video_latent": upscaled_video_latent,
+        })
 
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
@@ -294,6 +311,11 @@ class ICLoraPipeline:
             initial_audio_latent=audio_state.latent,
         )
 
+        log_generation_stage("Stage 2 denoising complete", {
+            "video_latent": video_state.latent,
+            "audio_latent": audio_state.latent,
+        })
+
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
@@ -301,8 +323,13 @@ class ICLoraPipeline:
             del video_encoder
             cleanup_memory()
 
+        log_generation_stage("Starting VAE decode")
         decoded_video = vae_decode_video(video_state.latent, video_decoder, tiling_config)
+        log_generation_stage("Video VAE decode complete")
+
         decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
+        log_generation_stage("Audio decode complete")
+
         return decoded_video, decoded_audio
 
     def _create_conditionings(
