@@ -31,6 +31,7 @@ from ltx_trainer import logger
 from ltx_trainer.config import LtxTrainerConfig
 from ltx_trainer.config_display import print_config
 from ltx_trainer.datasets import PrecomputedDataset
+from ltx_trainer.gpu_utils import free_gpu_memory, free_gpu_memory_context, get_gpu_memory_gb
 from ltx_trainer.hf_hub_utils import push_to_hub
 from ltx_trainer.model_loader import load_model as load_ltx_model
 from ltx_trainer.model_loader import load_text_encoder
@@ -38,7 +39,7 @@ from ltx_trainer.progress import TrainingProgress
 from ltx_trainer.quantization import quantize_model
 from ltx_trainer.timestep_samplers import SAMPLERS
 from ltx_trainer.training_strategies import get_training_strategy
-from ltx_trainer.utils import get_gpu_memory_gb, open_image_as_srgb, save_image
+from ltx_trainer.utils import open_image_as_srgb, save_image
 from ltx_trainer.validation_sampler import CachedPromptEmbeddings, GenerationConfig, ValidationSampler
 from ltx_trainer.video_utils import read_video, save_video
 
@@ -330,6 +331,7 @@ class LtxvTrainer:
 
         return loss
 
+    @free_gpu_memory_context(after=True)
     def _load_text_encoder_and_cache_embeddings(self) -> list[CachedPromptEmbeddings] | None:
         """Load text encoder, computes and returns validation embeddings."""
 
@@ -342,17 +344,13 @@ class LtxvTrainer:
 
         # Load text encoder on GPU
         logger.debug("Loading text encoder...")
-        if self._config.acceleration.load_text_encoder_in_8bit:
-            logger.warning(
-                "⚠️  load_text_encoder_in_8bit is set to True but 8-bit text encoder loading "
-                "is not currently implemented. The text encoder will be loaded in bfloat16 precision."
-            )
 
         self._text_encoder = load_text_encoder(
             checkpoint_path=self._config.model.model_path,
             gemma_model_path=self._config.model.text_encoder_path,
             device="cuda",
             dtype=torch.bfloat16,
+            load_in_8bit=self._config.acceleration.load_text_encoder_in_8bit,
         )
 
         # Cache validation embeddings if prompts are configured
@@ -378,7 +376,6 @@ class LtxvTrainer:
         self._text_encoder.model = None
         self._text_encoder.tokenizer = None
         self._text_encoder.feature_extractor_linear = None
-        torch.cuda.empty_cache()
 
         logger.debug("Validation prompt embeddings cached. Gemma model unloaded")
         return cached_embeddings
@@ -428,7 +425,7 @@ class LtxvTrainer:
             if self._config.model.training_mode == "full":
                 raise ValueError("Quantization is not supported in full training mode.")
 
-            logger.warning(f"Quantizing model with precision: {self._config.acceleration.quantization}")
+            logger.info(f'Quantizing model with "{self._config.acceleration.quantization}". This may take a while...')
             self._transformer = quantize_model(
                 self._transformer,
                 precision=self._config.acceleration.quantization,
@@ -724,6 +721,7 @@ class LtxvTrainer:
 
     # Note: Use @torch.no_grad() instead of @torch.inference_mode() to avoid FSDP inplace update errors after validation
     @torch.no_grad()
+    @free_gpu_memory_context(after=True)
     def _sample_videos(self, progress: TrainingProgress) -> list[Path] | None:
         """Run validation by generating videos from validation prompts."""
         use_images = self._config.validation.images is not None
@@ -731,10 +729,9 @@ class LtxvTrainer:
         generate_audio = self._config.validation.generate_audio
         inference_steps = self._config.validation.inference_steps
 
-        # Free up GPU memory before validation sampling.
-        # Zero gradients and empty the cache to reclaim memory.
+        # Zero gradients and free GPU memory to reclaim memory before validation sampling
         self._optimizer.zero_grad(set_to_none=True)
-        torch.cuda.empty_cache()
+        free_gpu_memory()
 
         # Start sampling progress tracking
         sampling_ctx = progress.start_sampling(
@@ -831,9 +828,6 @@ class LtxvTrainer:
         # Clean up progress tasks
         sampling_ctx.cleanup()
 
-        # Clear GPU cache after validation
-        torch.cuda.empty_cache()
-
         rel_outputs_path = output_dir.relative_to(self._config.output_dir)
         logger.info(f"🎥 Validation samples for step {self._global_step} saved in {rel_outputs_path}")
         return video_paths
@@ -873,6 +867,9 @@ class LtxvTrainer:
 
         save_dir.mkdir(exist_ok=True, parents=True)
 
+        # Determine save precision
+        save_dtype = torch.bfloat16 if self._config.checkpoints.precision == "bfloat16" else torch.float32
+
         # For LoRA: extract only adapter weights; for full: use as-is
         if is_lora:
             unwrapped = self._accelerator.unwrap_model(self._transformer, keep_torch_compile=False)
@@ -885,9 +882,15 @@ class LtxvTrainer:
             # Convert to ComfyUI-compatible format (add "diffusion_model." prefix)
             state_dict = {f"diffusion_model.{k}": v for k, v in state_dict.items()}
 
+            # Cast to configured precision
+            state_dict = {k: v.to(save_dtype) if isinstance(v, Tensor) else v for k, v in state_dict.items()}
+
             # Save to disk
             save_file(state_dict, saved_weights_path)
         else:
+            # Cast to configured precision
+            full_state_dict = {k: v.to(save_dtype) if isinstance(v, Tensor) else v for k, v in full_state_dict.items()}
+
             # Save to disk
             self._accelerator.save(full_state_dict, saved_weights_path)
 
