@@ -31,6 +31,7 @@ from ltx_pipelines.utils.helpers import (
     get_device,
     guider_denoising_func,
     image_conditionings_by_replacing_latent,
+    log_generation_stage,
     simple_denoising_func,
 )
 from ltx_pipelines.utils.media_io import encode_video
@@ -110,7 +111,6 @@ class TI2VidTwoStagesPipeline:
             device=device,
         )
 
-<<<<<<< HEAD
     def _get_models(self) -> dict[str, Any]:
         """Get all required models from cache or ledger."""
         if self._model_cache is not None:
@@ -150,9 +150,6 @@ class TI2VidTwoStagesPipeline:
         return self._model_cache is not None
 
     @torch.inference_mode()
-=======
-    @torch.no_grad()
->>>>>>> 56c7c4a63bff30fb2418b41293f0ad9f73e70b40
     def __call__(  # noqa: PLR0913
         self,
         prompt: str,
@@ -187,6 +184,8 @@ class TI2VidTwoStagesPipeline:
         audio_decoder = models["audio_decoder"]
         vocoder = models["vocoder"]
 
+        log_generation_stage("Starting generation")
+
         if enhance_prompt:
             prompt = generate_enhanced_prompt(
                 text_encoder, prompt, images[0][0] if len(images) > 0 else None, seed=seed
@@ -195,16 +194,18 @@ class TI2VidTwoStagesPipeline:
         v_context_p, a_context_p = context_p
         v_context_n, a_context_n = context_n
 
-<<<<<<< HEAD
+        log_generation_stage("Text encoding complete", {
+            "v_context_p": v_context_p,
+            "v_context_n": v_context_n,
+            "a_context_p": a_context_p,
+            "a_context_n": a_context_n,
+        })
+
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del text_encoder
             cleanup_memory()
-=======
-        torch.cuda.synchronize()
-        cleanup_memory()
->>>>>>> 56c7c4a63bff30fb2418b41293f0ad9f73e70b40
 
         # Stage 1: Initial low resolution video generation.
         sigmas = LTX2Scheduler().execute(steps=num_inference_steps).to(dtype=torch.float32, device=self.device)
@@ -254,15 +255,15 @@ class TI2VidTwoStagesPipeline:
             device=self.device,
         )
 
-<<<<<<< HEAD
+        log_generation_stage("Stage 1 denoising complete", {
+            "video_latent": video_state.latent,
+            "audio_latent": audio_state.latent,
+        })
+
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del transformer_stage1
             cleanup_memory()
-=======
-        torch.cuda.synchronize()
-        cleanup_memory()
->>>>>>> 56c7c4a63bff30fb2418b41293f0ad9f73e70b40
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
         upscaled_video_latent = upsample_video(
@@ -270,6 +271,10 @@ class TI2VidTwoStagesPipeline:
             video_encoder=video_encoder,
             upsampler=spatial_upsampler,
         )
+
+        log_generation_stage("Spatial upsampling complete", {
+            "upscaled_video_latent": upscaled_video_latent,
+        })
 
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
@@ -316,7 +321,11 @@ class TI2VidTwoStagesPipeline:
             initial_audio_latent=audio_state.latent,
         )
 
-<<<<<<< HEAD
+        log_generation_stage("Stage 2 denoising complete", {
+            "video_latent": video_state.latent,
+            "audio_latent": audio_state.latent,
+        })
+
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
@@ -324,24 +333,17 @@ class TI2VidTwoStagesPipeline:
             del video_encoder
             cleanup_memory()
 
+        log_generation_stage("Starting VAE decode")
         decoded_video = vae_decode_video(video_state.latent, video_decoder, tiling_config)
-        decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
-=======
-        torch.cuda.synchronize()
-        cleanup_memory()
+        log_generation_stage("Video VAE decode complete")
 
-        decoded_video = vae_decode_video(
-            video_state.latent, self.stage_2_model_ledger.video_decoder(), tiling_config, generator
-        )
-        decoded_audio = vae_decode_audio(
-            audio_state.latent, self.stage_2_model_ledger.audio_decoder(), self.stage_2_model_ledger.vocoder()
-        )
->>>>>>> 56c7c4a63bff30fb2418b41293f0ad9f73e70b40
+        decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
+        log_generation_stage("Audio decode complete")
 
         return decoded_video, decoded_audio
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_2_stage_arg_parser()

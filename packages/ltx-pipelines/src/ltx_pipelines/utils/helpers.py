@@ -1,9 +1,12 @@
 import gc
 import logging
 from dataclasses import replace
+from typing import Any
 
 import torch
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 from ltx_core.components.noisers import Noiser
 from ltx_core.components.protocols import DiffusionStepProtocol, GuiderProtocol
@@ -36,6 +39,50 @@ def cleanup_memory() -> None:
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
+
+
+def get_tensor_memory_mb(tensor: torch.Tensor) -> float:
+    """Get the memory size of a tensor in MB."""
+    return tensor.element_size() * tensor.numel() / 1024**2
+
+
+def get_gpu_memory_gb() -> tuple[float, float, float]:
+    """Get GPU memory usage in GB. Returns (allocated, reserved, total)."""
+    if not torch.cuda.is_available():
+        return 0.0, 0.0, 0.0
+    allocated = torch.cuda.memory_allocated() / 1024**3
+    reserved = torch.cuda.memory_reserved() / 1024**3
+    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    return allocated, reserved, total
+
+
+def log_tensor(name: str, tensor: torch.Tensor) -> None:
+    """Log tensor shape, dtype, and memory size."""
+    size_mb = get_tensor_memory_mb(tensor)
+    shape_str = "x".join(str(d) for d in tensor.shape)
+    logger.info(f"  📊 {name}: shape=[{shape_str}], dtype={tensor.dtype}, size={size_mb:.2f}MB")
+
+
+def log_gpu_memory(stage: str) -> None:
+    """Log current GPU memory usage."""
+    allocated, reserved, total = get_gpu_memory_gb()
+    logger.info(f"  💾 GPU Memory [{stage}]: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved / {total:.2f}GB total")
+
+
+def log_generation_stage(stage: str, tensors: dict[str, torch.Tensor | Any] | None = None) -> None:
+    """
+    Log a generation stage with optional tensor details.
+
+    Args:
+        stage: Name of the current stage (e.g., "Text Encoding", "Stage 1 Denoising")
+        tensors: Optional dict of tensor name -> tensor to log sizes
+    """
+    logger.info(f"🔄 {stage}")
+    if tensors:
+        for name, tensor in tensors.items():
+            if isinstance(tensor, torch.Tensor):
+                log_tensor(name, tensor)
+    log_gpu_memory(stage)
 
 
 def image_conditionings_by_replacing_latent(
