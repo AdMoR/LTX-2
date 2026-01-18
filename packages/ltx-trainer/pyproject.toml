@@ -27,7 +27,6 @@ dependencies = [
     "sentencepiece>=0.2.0",
     "torch>=2.6.0",
     "torchaudio>=2.9.0",
-    "torchcodec>=0.8.1",
     "torchvision>=0.21.0",
     "typer>=0.15.1",
     "wandb>=0.19.11",
@@ -45,10 +44,11 @@ dev = [
 torch = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 torchvision = { index = "pytorch" }
+torchcodec = { index = "pytorch" }
 
 [[tool.uv.index]]
 name = "pytorch"
-url = "https://download.pytorch.org/whl/cu130"
+url = "https://download.pytorch.org/whl/cu129"
 explicit = true
 
 [build-system]

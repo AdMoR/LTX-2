@@ -98,7 +98,7 @@ class GemmaTextEncoderModelBase(torch.nn.Module):
         pad_token_id = self.processor.tokenizer.pad_token_id if self.processor.tokenizer.pad_token_id is not None else 0
         model_inputs = _pad_inputs_for_attention_alignment(model_inputs, pad_token_id=pad_token_id)
 
-        with torch.inference_mode(), torch.random.fork_rng(devices=[self.model.device]):
+        with torch.no_grad(), torch.random.fork_rng(devices=[self.model.device]):
             torch.manual_seed(seed)
             outputs = self.model.generate(
                 **model_inputs,

@@ -539,7 +539,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
             video = batch["video"]
 
             # Encode video
-            with torch.inference_mode():
+            with torch.no_grad():
                 video_latent_data = encode_video(vae=vae, video=video)
 
             # Save latents for each item in batch
@@ -573,7 +573,7 @@ def compute_latents(  # noqa: PLR0913, PLR0915
                         }
 
                         # Encode audio
-                        with torch.inference_mode():
+                        with torch.no_grad():
                             audio_latents = encode_audio(audio_vae_encoder, audio_processor, audio_data)
 
                         # Save audio latents

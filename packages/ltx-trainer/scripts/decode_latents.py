@@ -77,7 +77,7 @@ class LatentsDecoder:
             with console.status(f"[bold]Loading vocoder from {model_path}...", spinner="dots"):
                 self.vocoder = load_vocoder(model_path, device=self.device)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def decode(self, latents_dir: Path, output_dir: Path, seed: int | None = None) -> None:
         """Decode all latent files in the directory recursively.
         Args:
@@ -177,7 +177,7 @@ class LatentsDecoder:
                 fps=fps,
             )
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def decode_audio(self, latents_dir: Path, output_dir: Path) -> None:
         """Decode all audio latent files in the directory recursively.
         Args:

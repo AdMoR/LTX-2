@@ -81,7 +81,7 @@ class KeyframeInterpolationPipeline:
             device=device,
         )
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def __call__(  # noqa: PLR0913
         self,
         prompt: str,
@@ -115,7 +115,6 @@ class KeyframeInterpolationPipeline:
         v_context_n, a_context_n = context_n
 
         torch.cuda.synchronize()
-        del text_encoder
         cleanup_memory()
 
         # Stage 1: Initial low resolution video generation.
@@ -169,7 +168,6 @@ class KeyframeInterpolationPipeline:
         )
 
         torch.cuda.synchronize()
-        del transformer
         cleanup_memory()
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
@@ -225,8 +223,6 @@ class KeyframeInterpolationPipeline:
         )
 
         torch.cuda.synchronize()
-        del transformer
-        del video_encoder
         cleanup_memory()
 
         decoded_video = vae_decode_video(video_state.latent, self.stage_2_model_ledger.video_decoder(), tiling_config)
@@ -236,7 +232,7 @@ class KeyframeInterpolationPipeline:
         return decoded_video, decoded_audio
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_2_stage_arg_parser()

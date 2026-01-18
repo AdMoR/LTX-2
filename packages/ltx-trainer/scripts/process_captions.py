@@ -297,7 +297,7 @@ def compute_captions_embeddings(
         for batch in dataloader:
             # Encode prompts using _preprocess_text (returns embeddings before connector)
             # This is what we want to save - the connector is applied during training
-            with torch.inference_mode():
+            with torch.no_grad():
                 # TODO(batch-tokenization): When tokenizer supports batching, encode all prompts at once:
                 #   prompt_embeds, prompt_attention_mask = text_encoder._preprocess_text(batch["prompt"]) # noqa: ERA001
                 # For now, process one at a time:

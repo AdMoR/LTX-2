@@ -101,7 +101,6 @@ class TI2VidOneStagePipeline:
         v_context_n, a_context_n = context_n
 
         torch.cuda.synchronize()
-        del text_encoder
         cleanup_memory()
 
         # Stage 1: Initial low resolution video generation.
@@ -150,7 +149,6 @@ class TI2VidOneStagePipeline:
         )
 
         torch.cuda.synchronize()
-        del transformer
         cleanup_memory()
 
         decoded_video = vae_decode_video(video_state.latent, self.model_ledger.video_decoder())
@@ -161,7 +159,7 @@ class TI2VidOneStagePipeline:
         return decoded_video, decoded_audio
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_1_stage_arg_parser()

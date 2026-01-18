@@ -9,3 +9,18 @@ dependencies = ["ltx-core", "av", "tqdm", "pillow"]
 [build-system]
 requires = ["uv_build>=0.9.8,<0.10.0"]
 build-backend = "uv_build"
+
+
+[uv]
+pre = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+xformers = { index = "pytorch" }
+torchcodec = { index = "pytorch" }
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

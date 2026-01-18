@@ -102,7 +102,6 @@ class DistilledPipeline:
         video_context, audio_context = context_p
 
         torch.cuda.synchronize()
-        del text_encoder
         cleanup_memory()
 
         # Stage 1: Initial low resolution video generation.
@@ -187,8 +186,6 @@ class DistilledPipeline:
         )
 
         torch.cuda.synchronize()
-        del transformer
-        del video_encoder
         cleanup_memory()
 
         decoded_video = vae_decode_video(video_state.latent, self.model_ledger.video_decoder(), tiling_config)
@@ -198,7 +195,7 @@ class DistilledPipeline:
         return decoded_video, decoded_audio
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_2_stage_distilled_arg_parser()

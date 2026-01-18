@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     # Initialize services
     logger.info("Initializing storage service...")
     storage = StorageService(settings.s3)
-    storage.ensure_bucket_exists()
+    #storage.ensure_bucket_exists()
 
     logger.info("Initializing media service...")
     media_service = MediaService(settings.temp_dir)

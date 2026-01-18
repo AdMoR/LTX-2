@@ -150,7 +150,7 @@ class ValidationSampler:
         self._video_patchifier = VideoLatentPatchifier(patch_size=1)
         self._audio_patchifier = AudioPatchifier(patch_size=1)
 
-    # Note: Use @torch.no_grad() instead of @torch.inference_mode() to avoid FSDP inplace update errors after validation
+    # Note: Use @torch.no_grad() instead of @torch.no_grad() to avoid FSDP inplace update errors after validation
     @torch.no_grad()
     def generate(
         self,

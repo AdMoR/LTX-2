@@ -24,19 +24,19 @@ class PipelineSettings(BaseSettings):
         description="Comma-separated list of pipelines to load",
     )
     checkpoint_path: str = Field(
-        default="/models/ltx2.safetensors",
+        default="./models/ltx-2-19b-distilled-fp8.safetensors",
         description="Path to LTX-2 model checkpoint",
     )
     gemma_root: str = Field(
-        default="/models/gemma",
+        default="./models/gemma-3-12b-it",
         description="Path to Gemma text encoder root directory",
     )
     spatial_upsampler_path: str | None = Field(
-        default="/models/upsampler.safetensors",
+        default="./models/ltx-2-spatial-upscaler-x2-1.0.safetensors",
         description="Path to spatial upsampler model",
     )
     distilled_lora_path: str | None = Field(
-        default=None,
+        default="./modelsltx-2-19b-ic-lora-depth-control.safetensors",
         description="Path to distilled LoRA for two-stage pipelines",
     )
     fp8_transformer: bool = Field(
@@ -69,22 +69,20 @@ class PipelineSettings(BaseSettings):
 
 class S3Settings(BaseSettings):
     """S3/MinIO storage configuration."""
-
     model_config = SettingsConfigDict(env_prefix="S3_")
-
-    bucket: str = Field(default="ltx-outputs", description="S3 bucket name")
+    bucket: str = Field(default="video-embeddings", description="S3 bucket name")
     endpoint: str = Field(
-        default="http://minio:9000",
+        default="http://amor-ms-7e02:9000",
         description="S3 endpoint URL",
     )
-    region: str = Field(default="us-east-1", description="S3 region")
+    region: str = Field(default="", description="S3 region")
     access_key_id: str = Field(
-        default="",
+        default="minioadmin",
         alias="AWS_ACCESS_KEY_ID",
         description="AWS access key ID",
     )
     secret_access_key: str = Field(
-        default="",
+        default="minioadmin",
         alias="AWS_SECRET_ACCESS_KEY",
         description="AWS secret access key",
     )

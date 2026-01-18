@@ -9,7 +9,6 @@ dependencies = [
     "torchaudio",
     "einops",
     "numpy",
-    "transformers",
     "safetensors",
     "accelerate",
     "scipy>=1.14",
@@ -18,6 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 xformers = ["xformers"]
 
+[uv]
+pre = true
 
 [tool.uv.sources]
 torch = { index = "pytorch" }

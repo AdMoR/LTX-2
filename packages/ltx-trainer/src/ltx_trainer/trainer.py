@@ -360,7 +360,7 @@ class LtxvTrainer:
         if self._config.validation.prompts:
             logger.info(f"Pre-computing embeddings for {len(self._config.validation.prompts)} validation prompts...")
             cached_embeddings = []
-            with torch.inference_mode():
+            with torch.no_grad():
                 for prompt in self._config.validation.prompts:
                     v_ctx_pos, a_ctx_pos, _ = self._text_encoder(prompt)
                     v_ctx_neg, a_ctx_neg, _ = self._text_encoder(self._config.validation.negative_prompt)
@@ -722,7 +722,7 @@ class LtxvTrainer:
                 "Monitor training stability and consider disabling quantization if issues arise."
             )
 
-    # Note: Use @torch.no_grad() instead of @torch.inference_mode() to avoid FSDP inplace update errors after validation
+    # Note: Use @torch.no_grad() instead of @torch.no_grad() to avoid FSDP inplace update errors after validation
     @torch.no_grad()
     def _sample_videos(self, progress: TrainingProgress) -> list[Path] | None:
         """Run validation by generating videos from validation prompts."""

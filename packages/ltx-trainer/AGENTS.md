@@ -163,7 +163,7 @@ uv run accelerate launch scripts/train.py configs/ltx2_av_lora.yaml
 
 ### AI/ML Specific
 
-- Use `@torch.inference_mode()` for inference (prefer over `@torch.no_grad()`)
+- Use `@torch.no_grad()` for inference (prefer over `@torch.no_grad()`)
 - Use `accelerator.device` for distributed compatibility
 - Support mixed precision (`bfloat16` via dtype parameters)
 - Use gradient checkpointing for memory-intensive training
