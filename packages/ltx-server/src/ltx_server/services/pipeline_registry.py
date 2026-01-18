@@ -200,7 +200,7 @@ class PipelineRegistry:
         """Check if a pipeline is loaded."""
         return name in self._pipelines
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def generate(
         self,
         pipeline_name: str,

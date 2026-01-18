@@ -1,4 +1,5 @@
 import math
+import os.path
 from collections.abc import Generator, Iterator
 from fractions import Fraction
 from io import BytesIO
@@ -193,7 +194,7 @@ def encode_video(
     first_chunk = next(video)
 
     _, height, width, _ = first_chunk.shape
-
+    #/home/amor/Documents/code_dw/ollama/ComfyUI/output/video/LTX-2_00001_.mp4
     container = av.open(output_path, mode="w")
     stream = container.add_stream("libx264", rate=int(fps))
     stream.width = width
@@ -247,6 +248,8 @@ def decode_audio_from_file(path: str, device: torch.device) -> torch.Tensor | No
 
 
 def decode_video_from_file(path: str, frame_cap: int, device: DeviceLikeType) -> Generator[torch.Tensor]:
+    import os
+    print("=====> ", os.path.exists(path))
     container = av.open(path)
     try:
         video_stream = next(s for s in container.streams if s.type == "video")

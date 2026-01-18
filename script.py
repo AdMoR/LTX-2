@@ -202,7 +202,7 @@ def main() -> None:
     parser.add_argument(
         "--height",
         type=int,
-        default=544,
+        default=640,
         help="Video height (divisible by 64 for two-stage)",
     )
     parser.add_argument(

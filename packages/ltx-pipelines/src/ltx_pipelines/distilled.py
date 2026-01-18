@@ -257,7 +257,7 @@ class DistilledPipeline:
         return decoded_video, decoded_audio
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_2_stage_distilled_arg_parser()

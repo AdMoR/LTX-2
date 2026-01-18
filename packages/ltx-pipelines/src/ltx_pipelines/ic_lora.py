@@ -147,7 +147,7 @@ class ICLoraPipeline:
         """Check if using shared model cache."""
         return self._model_cache is not None
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def __call__(
         self,
         prompt: str,
@@ -338,7 +338,7 @@ class ICLoraPipeline:
         return conditionings
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def main() -> None:
     logging.getLogger().setLevel(logging.INFO)
     parser = default_2_stage_distilled_arg_parser()

@@ -1,10 +1,18 @@
 # =============================================================================
-# LTX-2 Audio-Video LoRA Training Configuration
+# LTX-2 Audio-Video LoRA Training Configuration (Low VRAM)
 # =============================================================================
 #
-# This configuration is for training LoRA adapters on the LTX-2 model for
-# text-to-video generation. It supports both video-only and joint audio-video
-# training modes.
+# This is a memory-optimized variant of the standard audio-video LoRA config.
+# It uses 8-bit optimizer, int8 quantization, and reduced LoRA rank to minimize
+# GPU memory usage while maintaining good training quality.
+#
+# Memory optimizations applied:
+#   - 8-bit AdamW optimizer (reduces optimizer state memory by ~75%)
+#   - INT8 model quantization (reduces model memory by ~50%)
+#   - Lower LoRA rank (16 vs 32, reduces trainable parameters)
+#   - Gradient checkpointing enabled
+#
+# Recommended for GPUs with 32GB VRAM (e.g., RTX 5090).
 #
 # Use this configuration when you want to:
 #   - Fine-tune LTX-2 on your own video dataset
@@ -44,14 +52,16 @@ model:
 # LoRA Configuration
 # -----------------------------------------------------------------------------
 # Controls the Low-Rank Adaptation parameters for efficient fine-tuning.
+# Using a lower rank (16) to reduce trainable parameters and memory usage.
+# This still provides good capacity for many fine-tuning tasks.
 lora:
   # Rank of the LoRA matrices (higher = more capacity but more parameters)
-  # Typical values: 8, 16, 32, 64. Start with 32 for general fine-tuning.
-  rank: 32
+  # Typical values: 8, 16, 32, 64. Using 16 for low VRAM configuration.
+  rank: 16
 
   # Alpha scaling factor (usually set equal to rank)
   # The effective scaling is alpha/rank, so alpha=rank means scaling of 1.0
-  alpha: 32
+  alpha: 16
 
   # Dropout probability for LoRA layers (0.0 = no dropout)
   # Can help with regularization if overfitting occurs
@@ -136,7 +146,8 @@ optimization:
   max_grad_norm: 1.0
 
   # Optimizer type: "adamw" (standard) or "adamw8bit" (memory-efficient)
-  optimizer_type: "adamw"
+  # Using 8-bit AdamW to reduce optimizer state memory by ~75%
+  optimizer_type: "adamw8bit"
 
   # Learning rate scheduler type
   # Options: "constant", "linear", "cosine", "cosine_with_restarts", "polynomial"
@@ -160,11 +171,12 @@ acceleration:
 
   # Model quantization for reduced memory usage
   # Options: null (none), "int8-quanto", "int4-quanto", "int2-quanto", "fp8-quanto", "fp8uz-quanto"
-  quantization: null
+  # Using INT8 quantization to reduce base model memory consumption by ~50%
+  quantization: "int8-quanto"
 
   # Load text encoder in 8-bit precision to save memory
   # Useful when GPU memory is limited
-  load_text_encoder_in_8bit: false
+  load_text_encoder_in_8bit: true
 
 # -----------------------------------------------------------------------------
 # Data Configuration
@@ -203,7 +215,7 @@ validation:
   # Output video dimensions [width, height, frames]
   # Width and height must be divisible by 32
   # Frames must satisfy: frames % 8 == 1 (e.g., 1, 9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, ...)
-  video_dims: [ 576, 576, 89 ]
+  video_dims: [ 576, 576, 49 ]
 
   # Frame rate for generated videos
   frame_rate: 25.0
@@ -229,7 +241,7 @@ validation:
   # STG (Spatio-Temporal Guidance) parameters for improved video quality
   # STG is combined with CFG for better temporal coherence
   stg_scale: 1.0  # Recommended: 1.0 (0.0 disables STG)
-  stg_blocks: [29]  # Recommended: single block 29
+  stg_blocks: [ 29 ]  # Recommended: single block 29
   stg_mode: "stg_av"  # "stg_av" perturbs both audio and video, "stg_v" video only
 
   # Whether to generate audio in validation samples

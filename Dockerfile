@@ -24,8 +24,7 @@ RUN pip install --upgrade pip setuptools wheel
 # Install PyTorch with CUDA 13.0 support
 RUN pip install --index-url https://download.pytorch.org/whl/cu130 \
     torch~=2.7 \
-    torchaudio \
-    xformers
+    torchaudio
 
 # Install all Python dependencies
 RUN pip install \

@@ -1,25 +1,17 @@
 """S3/MinIO storage service for video uploads and presigned URLs."""
-
 import logging
 from pathlib import Path
-
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-
-from ltx_server.config import S3Settings, get_settings
-
+#from ltx_server.config import S3Settings, get_settings
 logger = logging.getLogger(__name__)
-
-
 class StorageService:
     """Service for uploading files to S3/MinIO and generating presigned URLs."""
-
-    def __init__(self, settings: S3Settings | None = None):
+    def __init__(self, settings= None):
         """Initialize storage service with S3 settings."""
-        self.settings = settings or get_settings().s3
+        self.settings = settings
         self._client = None
-
     @property
     def client(self):
         """Lazy-load S3 client."""
@@ -33,7 +25,6 @@ class StorageService:
                 config=Config(signature_version="s3v4"),
             )
         return self._client
-
     def ensure_bucket_exists(self) -> None:
         """Create bucket if it doesn't exist."""
         try:
@@ -53,7 +44,6 @@ class StorageService:
                     self.client.create_bucket(Bucket=self.settings.bucket)
             else:
                 raise
-
     def upload_file(
         self,
         file_path: Path,
@@ -62,26 +52,21 @@ class StorageService:
     ) -> str:
         """
         Upload a file to S3.
-
         Args:
             file_path: Local path to the file
             object_key: S3 object key (path in bucket)
             content_type: MIME type of the file
-
         Returns:
             The object key
         """
         logger.info(f"Uploading {file_path} to s3://{self.settings.bucket}/{object_key}")
-
         self.client.upload_file(
             str(file_path),
             self.settings.bucket,
             object_key,
             ExtraArgs={"ContentType": content_type},
         )
-
         return object_key
-
     def upload_bytes(
         self,
         data: bytes,
@@ -90,26 +75,21 @@ class StorageService:
     ) -> str:
         """
         Upload bytes directly to S3.
-
         Args:
             data: Bytes to upload
             object_key: S3 object key
             content_type: MIME type
-
         Returns:
             The object key
         """
         logger.info(f"Uploading bytes to s3://{self.settings.bucket}/{object_key}")
-
         self.client.put_object(
             Bucket=self.settings.bucket,
             Key=object_key,
             Body=data,
             ContentType=content_type,
         )
-
         return object_key
-
     def get_presigned_url(
         self,
         object_key: str,
@@ -117,7 +97,6 @@ class StorageService:
     ) -> str:
         """
         Generate a presigned URL for downloading an object.
-
         Args:
             object_key: S3 object key
             expiry: URL expiry time in seconds (default from settings)
@@ -126,7 +105,6 @@ class StorageService:
             Presigned URL string
         """
         expiry = expiry or self.settings.presigned_url_expiry
-
         url = self.client.generate_presigned_url(
             "get_object",
             Params={
@@ -135,14 +113,11 @@ class StorageService:
             },
             ExpiresIn=expiry,
         )
-
         return url
-
     def delete_object(self, object_key: str) -> None:
         """Delete an object from S3."""
         logger.info(f"Deleting s3://{self.settings.bucket}/{object_key}")
         self.client.delete_object(Bucket=self.settings.bucket, Key=object_key)
-
     def object_exists(self, object_key: str) -> bool:
         """Check if an object exists in S3."""
         try:
