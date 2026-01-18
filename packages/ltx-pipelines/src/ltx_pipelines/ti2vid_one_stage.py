@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -29,6 +30,9 @@ from ltx_pipelines.utils.helpers import (
 from ltx_pipelines.utils.media_io import encode_video
 from ltx_pipelines.utils.types import PipelineComponents
 
+if TYPE_CHECKING:
+    from ltx_server.services.model_cache import SharedModelCache
+
 device = get_device()
 
 
@@ -38,36 +42,86 @@ class TI2VidOneStagePipeline:
     Generates video at the target resolution in a single diffusion pass with
     classifier-free guidance (CFG). Supports optional image conditioning via
     the images parameter.
+
+    Can be initialized in two ways:
+    1. With a SharedModelCache (for server use with shared models)
+    2. With individual model paths (for standalone/CLI use)
     """
 
     def __init__(
         self,
-        checkpoint_path: str,
-        gemma_root: str,
-        loras: list[LoraPathStrengthAndSDOps],
+        checkpoint_path: str | None = None,
+        gemma_root: str | None = None,
+        loras: list[LoraPathStrengthAndSDOps] | None = None,
         device: torch.device = device,
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
         text_encoder_8bit: bool = False,
         text_encoder_4bit: bool = False,
+        *,
+        model_cache: "SharedModelCache | None" = None,
     ):
         self.dtype = torch.bfloat16
         self.device = device
-        self.model_ledger = ModelLedger(
-            dtype=self.dtype,
-            device=device,
-            checkpoint_path=checkpoint_path,
-            gemma_root_path=gemma_root,
-            loras=loras,
-            fp8transformer=fp8transformer,
-            text_encoder_device=text_encoder_device,
-            text_encoder_8bit=text_encoder_8bit,
-            text_encoder_4bit=text_encoder_4bit,
-        )
+        self._model_cache = model_cache
+        self._loras = loras or []
+
+        if model_cache is not None:
+            # Server mode: use shared model cache
+            self._model_ledger = None
+        else:
+            # Standalone mode: create ModelLedger
+            if checkpoint_path is None or gemma_root is None:
+                raise ValueError(
+                    "checkpoint_path and gemma_root are required when not using a SharedModelCache"
+                )
+            self._model_ledger = ModelLedger(
+                dtype=self.dtype,
+                device=device,
+                checkpoint_path=checkpoint_path,
+                gemma_root_path=gemma_root,
+                loras=self._loras,
+                fp8transformer=fp8transformer,
+                text_encoder_device=text_encoder_device,
+                text_encoder_8bit=text_encoder_8bit,
+                text_encoder_4bit=text_encoder_4bit,
+            )
+
         self.pipeline_components = PipelineComponents(
             dtype=self.dtype,
             device=device,
         )
+
+    def _get_models(self) -> dict[str, Any]:
+        """Get all required models from cache or ledger."""
+        if self._model_cache is not None:
+            # For one-stage pipeline with LoRAs, build transformer on demand
+            if self._loras:
+                transformer = self._model_cache.build_transformer_with_loras(self._loras)
+            else:
+                transformer = self._model_cache.get_transformer_base()
+            return {
+                "text_encoder": self._model_cache.get_text_encoder(),
+                "video_encoder": self._model_cache.get_video_encoder(),
+                "video_decoder": self._model_cache.get_video_decoder(),
+                "audio_decoder": self._model_cache.get_audio_decoder(),
+                "vocoder": self._model_cache.get_vocoder(),
+                "transformer": transformer,
+            }
+        else:
+            return {
+                "text_encoder": self._model_ledger.text_encoder(),
+                "video_encoder": self._model_ledger.video_encoder(),
+                "video_decoder": self._model_ledger.video_decoder(),
+                "audio_decoder": self._model_ledger.audio_decoder(),
+                "vocoder": self._model_ledger.vocoder(),
+                "transformer": self._model_ledger.transformer(),
+            }
+
+    @property
+    def _uses_shared_cache(self) -> bool:
+        """Check if using shared model cache."""
+        return self._model_cache is not None
 
     def __call__(  # noqa: PLR0913
         self,
@@ -91,7 +145,15 @@ class TI2VidOneStagePipeline:
         cfg_guider = CFGGuider(cfg_guidance_scale)
         dtype = torch.bfloat16
 
-        text_encoder = self.model_ledger.text_encoder()
+        # Get all models (from cache or ledger)
+        models = self._get_models()
+        text_encoder = models["text_encoder"]
+        video_encoder = models["video_encoder"]
+        transformer = models["transformer"]
+        video_decoder = models["video_decoder"]
+        audio_decoder = models["audio_decoder"]
+        vocoder = models["vocoder"]
+
         if enhance_prompt:
             prompt = generate_enhanced_prompt(
                 text_encoder, prompt, images[0][0] if len(images) > 0 else None, seed=seed
@@ -100,13 +162,13 @@ class TI2VidOneStagePipeline:
         v_context_p, a_context_p = context_p
         v_context_n, a_context_n = context_n
 
-        torch.cuda.synchronize()
-        del text_encoder
-        cleanup_memory()
+        # Only cleanup if not using shared cache
+        if not self._uses_shared_cache:
+            torch.cuda.synchronize()
+            del text_encoder
+            cleanup_memory()
 
-        # Stage 1: Initial low resolution video generation.
-        video_encoder = self.model_ledger.video_encoder()
-        transformer = self.model_ledger.transformer()
+        # Stage 1: Video generation.
         sigmas = LTX2Scheduler().execute(steps=num_inference_steps).to(dtype=torch.float32, device=self.device)
 
         def first_stage_denoising_loop(
@@ -149,14 +211,14 @@ class TI2VidOneStagePipeline:
             device=self.device,
         )
 
-        torch.cuda.synchronize()
-        del transformer
-        cleanup_memory()
+        # Only cleanup if not using shared cache
+        if not self._uses_shared_cache:
+            torch.cuda.synchronize()
+            del transformer
+            cleanup_memory()
 
-        decoded_video = vae_decode_video(video_state.latent, self.model_ledger.video_decoder())
-        decoded_audio = vae_decode_audio(
-            audio_state.latent, self.model_ledger.audio_decoder(), self.model_ledger.vocoder()
-        )
+        decoded_video = vae_decode_video(video_state.latent, video_decoder)
+        decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
 
         return decoded_video, decoded_audio
 

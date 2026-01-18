@@ -6,7 +6,6 @@ from typing import Any
 
 import torch
 
-from ltx_core.loader import LoraPathStrengthAndSDOps
 from ltx_pipelines import (
     DistilledPipeline,
     ICLoraPipeline,
@@ -16,6 +15,7 @@ from ltx_pipelines import (
 )
 from ltx_server.config import PipelineSettings, get_settings
 from ltx_server.models.responses import PipelineInfo
+from ltx_server.services.model_cache import SharedModelCache
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +66,18 @@ PIPELINE_METADATA: dict[str, PipelineInfo] = {
 
 
 class PipelineRegistry:
-    """Registry for loading and managing video generation pipelines."""
+    """Registry for loading and managing video generation pipelines.
+
+    Uses a SharedModelCache to load all models once and share them across pipelines.
+    This significantly reduces memory usage compared to loading models per-pipeline.
+    """
 
     def __init__(self, settings: PipelineSettings | None = None):
         """Initialize the registry with pipeline settings."""
         self.settings = settings or get_settings().pipeline
         self._pipelines: dict[str, Any] = {}
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._model_cache: SharedModelCache | None = None
 
     @property
     def device(self) -> torch.device:
@@ -84,11 +89,52 @@ class PipelineRegistry:
         """Check if GPU is available."""
         return torch.cuda.is_available()
 
+    @property
+    def model_cache(self) -> SharedModelCache:
+        """Get the shared model cache."""
+        if self._model_cache is None:
+            raise RuntimeError("Model cache not initialized. Call load_pipelines() first.")
+        return self._model_cache
+
     def load_pipelines(self) -> None:
-        """Load all configured pipelines."""
+        """Load all configured pipelines using shared model cache."""
         enabled = self.settings.enabled_pipelines
         logger.info(f"Loading pipelines: {enabled}")
 
+        # Determine if we need spatial upsampler and distilled transformer
+        needs_upsampler = any(
+            p in enabled for p in ["distilled", "ic_lora", "ti2vid_two_stages", "keyframe_interpolation"]
+        )
+        needs_distilled = any(
+            p in enabled for p in ["ti2vid_two_stages", "keyframe_interpolation"]
+        )
+
+        # Validate required paths
+        if needs_upsampler and not self.settings.spatial_upsampler_path:
+            raise ValueError(
+                f"spatial_upsampler_path is required for pipelines: {enabled}"
+            )
+        if needs_distilled and not self.settings.distilled_lora_path:
+            raise ValueError(
+                f"distilled_lora_path is required for pipelines: {enabled}"
+            )
+
+        # Create shared model cache with all required models
+        logger.info("Initializing shared model cache...")
+        self._model_cache = SharedModelCache(
+            checkpoint_path=self.settings.checkpoint_path,
+            gemma_root=self.settings.gemma_root,
+            spatial_upsampler_path=self.settings.spatial_upsampler_path if needs_upsampler else None,
+            distilled_lora_path=self.settings.distilled_lora_path if needs_distilled else None,
+            device=self._device,
+            fp8transformer=self.settings.fp8_transformer,
+            text_encoder_device=self.settings.text_encoder_device,
+            text_encoder_8bit=self.settings.text_encoder_8bit,
+            text_encoder_4bit=self.settings.text_encoder_4bit,
+        )
+        logger.info("Shared model cache initialized")
+
+        # Load pipelines using the shared cache
         for name in enabled:
             if name not in PIPELINE_METADATA:
                 logger.warning(f"Unknown pipeline: {name}, skipping")
@@ -102,87 +148,35 @@ class PipelineRegistry:
                 raise
 
     def _load_pipeline(self, name: str) -> None:
-        """Load a specific pipeline by name."""
-        text_encoder_device = self.settings.text_encoder_device
-
+        """Load a specific pipeline by name using shared model cache."""
         if name == "ti2vid_one_stage":
             self._pipelines[name] = TI2VidOneStagePipeline(
-                checkpoint_path=self.settings.checkpoint_path,
-                gemma_root=self.settings.gemma_root,
-                loras=[],
                 device=self._device,
-                fp8transformer=self.settings.fp8_transformer,
-                text_encoder_device=text_encoder_device,
-                text_encoder_8bit=self.settings.text_encoder_8bit,
-                text_encoder_4bit=self.settings.text_encoder_4bit,
+                model_cache=self._model_cache,
             )
 
         elif name == "ti2vid_two_stages":
-            if not self.settings.distilled_lora_path or not self.settings.spatial_upsampler_path:
-                raise ValueError(
-                    "ti2vid_two_stages requires distilled_lora_path and spatial_upsampler_path"
-                )
-            distilled_lora = [LoraPathStrengthAndSDOps(self.settings.distilled_lora_path, 1.0, {})]
             self._pipelines[name] = TI2VidTwoStagesPipeline(
-                checkpoint_path=self.settings.checkpoint_path,
-                distilled_lora=distilled_lora,
-                spatial_upsampler_path=self.settings.spatial_upsampler_path,
-                gemma_root=self.settings.gemma_root,
-                loras=[],
                 device=self._device,
-                fp8transformer=self.settings.fp8_transformer,
-                text_encoder_device=text_encoder_device,
-                text_encoder_8bit=self.settings.text_encoder_8bit,
-                text_encoder_4bit=self.settings.text_encoder_4bit,
+                model_cache=self._model_cache,
             )
 
         elif name == "distilled":
-            if not self.settings.spatial_upsampler_path:
-                raise ValueError("distilled requires spatial_upsampler_path")
             self._pipelines[name] = DistilledPipeline(
-                checkpoint_path=self.settings.checkpoint_path,
-                gemma_root=self.settings.gemma_root,
-                spatial_upsampler_path=self.settings.spatial_upsampler_path,
-                loras=[],
                 device=self._device,
-                fp8transformer=self.settings.fp8_transformer,
-                text_encoder_device=text_encoder_device,
-                text_encoder_8bit=self.settings.text_encoder_8bit,
-                text_encoder_4bit=self.settings.text_encoder_4bit,
+                model_cache=self._model_cache,
             )
 
         elif name == "ic_lora":
-            if not self.settings.spatial_upsampler_path:
-                raise ValueError("ic_lora requires spatial_upsampler_path")
             self._pipelines[name] = ICLoraPipeline(
-                checkpoint_path=self.settings.checkpoint_path,
-                spatial_upsampler_path=self.settings.spatial_upsampler_path,
-                gemma_root=self.settings.gemma_root,
-                loras=[],
                 device=self._device,
-                fp8transformer=self.settings.fp8_transformer,
-                text_encoder_device=text_encoder_device,
-                text_encoder_8bit=self.settings.text_encoder_8bit,
-                text_encoder_4bit=self.settings.text_encoder_4bit,
+                model_cache=self._model_cache,
             )
 
         elif name == "keyframe_interpolation":
-            if not self.settings.distilled_lora_path or not self.settings.spatial_upsampler_path:
-                raise ValueError(
-                    "keyframe_interpolation requires distilled_lora_path and spatial_upsampler_path"
-                )
-            distilled_lora = [LoraPathStrengthAndSDOps(self.settings.distilled_lora_path, 1.0, {})]
             self._pipelines[name] = KeyframeInterpolationPipeline(
-                checkpoint_path=self.settings.checkpoint_path,
-                distilled_lora=distilled_lora,
-                spatial_upsampler_path=self.settings.spatial_upsampler_path,
-                gemma_root=self.settings.gemma_root,
-                loras=[],
                 device=self._device,
-                fp8transformer=self.settings.fp8_transformer,
-                text_encoder_device=text_encoder_device,
-                text_encoder_8bit=self.settings.text_encoder_8bit,
-                text_encoder_4bit=self.settings.text_encoder_4bit,
+                model_cache=self._model_cache,
             )
 
         else:

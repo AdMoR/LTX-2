@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -33,6 +34,9 @@ from ltx_pipelines.utils.helpers import (
 from ltx_pipelines.utils.media_io import encode_video
 from ltx_pipelines.utils.types import PipelineComponents
 
+if TYPE_CHECKING:
+    from ltx_server.services.model_cache import SharedModelCache
+
 device = get_device()
 
 
@@ -41,40 +45,85 @@ class DistilledPipeline:
     Two-stage distilled video generation pipeline.
     Stage 1 generates video at the target resolution, then Stage 2 upsamples
     by 2x and refines with additional denoising steps for higher quality output.
+
+    Can be initialized in two ways:
+    1. With a SharedModelCache (for server use with shared models)
+    2. With individual model paths (for standalone/CLI use)
     """
 
     def __init__(
         self,
-        checkpoint_path: str,
-        gemma_root: str,
-        spatial_upsampler_path: str,
-        loras: list[LoraPathStrengthAndSDOps],
+        checkpoint_path: str | None = None,
+        gemma_root: str | None = None,
+        spatial_upsampler_path: str | None = None,
+        loras: list[LoraPathStrengthAndSDOps] | None = None,
         device: torch.device = device,
         fp8transformer: bool = False,
         text_encoder_device: torch.device | str | None = None,
         text_encoder_8bit: bool = False,
         text_encoder_4bit: bool = False,
+        *,
+        model_cache: "SharedModelCache | None" = None,
     ):
         self.device = device
         self.dtype = torch.bfloat16
+        self._model_cache = model_cache
 
-        self.model_ledger = ModelLedger(
-            dtype=self.dtype,
-            device=device,
-            checkpoint_path=checkpoint_path,
-            spatial_upsampler_path=spatial_upsampler_path,
-            gemma_root_path=gemma_root,
-            loras=loras,
-            fp8transformer=fp8transformer,
-            text_encoder_device=text_encoder_device,
-            text_encoder_8bit=text_encoder_8bit,
-            text_encoder_4bit=text_encoder_4bit,
-        )
+        if model_cache is not None:
+            # Server mode: use shared model cache
+            self._model_ledger = None
+        else:
+            # Standalone mode: create ModelLedger
+            if checkpoint_path is None or gemma_root is None or spatial_upsampler_path is None:
+                raise ValueError(
+                    "checkpoint_path, gemma_root, and spatial_upsampler_path are required "
+                    "when not using a SharedModelCache"
+                )
+            self._model_ledger = ModelLedger(
+                dtype=self.dtype,
+                device=device,
+                checkpoint_path=checkpoint_path,
+                spatial_upsampler_path=spatial_upsampler_path,
+                gemma_root_path=gemma_root,
+                loras=loras or [],
+                fp8transformer=fp8transformer,
+                text_encoder_device=text_encoder_device,
+                text_encoder_8bit=text_encoder_8bit,
+                text_encoder_4bit=text_encoder_4bit,
+            )
 
         self.pipeline_components = PipelineComponents(
             dtype=self.dtype,
             device=device,
         )
+
+    def _get_models(self) -> dict[str, Any]:
+        """Get all required models from cache or ledger."""
+        if self._model_cache is not None:
+            return {
+                "text_encoder": self._model_cache.get_text_encoder(),
+                "video_encoder": self._model_cache.get_video_encoder(),
+                "video_decoder": self._model_cache.get_video_decoder(),
+                "audio_decoder": self._model_cache.get_audio_decoder(),
+                "vocoder": self._model_cache.get_vocoder(),
+                "spatial_upsampler": self._model_cache.get_spatial_upsampler(),
+                "transformer": self._model_cache.get_transformer_base(),
+            }
+        else:
+            return {
+                "text_encoder": self._model_ledger.text_encoder(),
+                "video_encoder": self._model_ledger.video_encoder(),
+                "video_decoder": self._model_ledger.video_decoder(),
+                "audio_decoder": self._model_ledger.audio_decoder(),
+                "vocoder": self._model_ledger.vocoder(),
+                "spatial_upsampler": self._model_ledger.spatial_upsampler(),
+                "transformer": self._model_ledger.transformer(),
+            }
+
+    @property
+    def _uses_shared_cache(self) -> bool:
+        """Check if using shared model cache."""
+        return self._model_cache is not None
 
     def __call__(
         self,
@@ -95,19 +144,28 @@ class DistilledPipeline:
         stepper = EulerDiffusionStep()
         dtype = torch.bfloat16
 
-        text_encoder = self.model_ledger.text_encoder()
+        # Get all models (from cache or ledger)
+        models = self._get_models()
+        text_encoder = models["text_encoder"]
+        video_encoder = models["video_encoder"]
+        transformer = models["transformer"]
+        spatial_upsampler = models["spatial_upsampler"]
+        video_decoder = models["video_decoder"]
+        audio_decoder = models["audio_decoder"]
+        vocoder = models["vocoder"]
+
         if enhance_prompt:
             prompt = generate_enhanced_prompt(text_encoder, prompt, images[0][0] if len(images) > 0 else None)
         context_p = encode_text(text_encoder, prompts=[prompt])[0]
         video_context, audio_context = context_p
 
-        torch.cuda.synchronize()
-        del text_encoder
-        cleanup_memory()
+        # Only cleanup if not using shared cache
+        if not self._uses_shared_cache:
+            torch.cuda.synchronize()
+            del text_encoder
+            cleanup_memory()
 
         # Stage 1: Initial low resolution video generation.
-        video_encoder = self.model_ledger.video_encoder()
-        transformer = self.model_ledger.transformer()
         stage_1_sigmas = torch.Tensor(DISTILLED_SIGMA_VALUES).to(self.device)
 
         def denoising_loop(
@@ -155,11 +213,12 @@ class DistilledPipeline:
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
         upscaled_video_latent = upsample_video(
-            latent=video_state.latent[:1], video_encoder=video_encoder, upsampler=self.model_ledger.spatial_upsampler()
+            latent=video_state.latent[:1], video_encoder=video_encoder, upsampler=spatial_upsampler
         )
 
-        torch.cuda.synchronize()
-        cleanup_memory()
+        if not self._uses_shared_cache:
+            torch.cuda.synchronize()
+            cleanup_memory()
 
         stage_2_sigmas = torch.Tensor(STAGE_2_DISTILLED_SIGMA_VALUES).to(self.device)
         stage_2_output_shape = VideoPixelShape(batch=1, frames=num_frames, width=width, height=height, fps=frame_rate)
@@ -186,15 +245,15 @@ class DistilledPipeline:
             initial_audio_latent=audio_state.latent,
         )
 
-        torch.cuda.synchronize()
-        del transformer
-        del video_encoder
-        cleanup_memory()
+        # Only cleanup if not using shared cache
+        if not self._uses_shared_cache:
+            torch.cuda.synchronize()
+            del transformer
+            del video_encoder
+            cleanup_memory()
 
-        decoded_video = vae_decode_video(video_state.latent, self.model_ledger.video_decoder(), tiling_config)
-        decoded_audio = vae_decode_audio(
-            audio_state.latent, self.model_ledger.audio_decoder(), self.model_ledger.vocoder()
-        )
+        decoded_video = vae_decode_video(video_state.latent, video_decoder, tiling_config)
+        decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
         return decoded_video, decoded_audio
 
 
