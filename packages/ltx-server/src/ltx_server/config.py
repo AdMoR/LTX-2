@@ -40,7 +40,7 @@ class PipelineSettings(BaseSettings):
         description="Path to distilled LoRA for two-stage pipelines",
     )
     fp8_transformer: bool = Field(
-        default=False,
+        default=True,
         description="Enable FP8 mode for transformer",
     )
     text_encoder_cpu: bool = Field(
@@ -52,7 +52,7 @@ class PipelineSettings(BaseSettings):
         description="Use 8-bit quantization for text encoder",
     )
     text_encoder_4bit: bool = Field(
-        default=False,
+        default=True,
         description="Use 4-bit quantization for text encoder",
     )
 
