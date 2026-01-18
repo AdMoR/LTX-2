@@ -1,5 +1,6 @@
 """Shared model cache for LTX pipelines."""
 
+import gc
 import hashlib
 import logging
 import threading
@@ -91,8 +92,19 @@ def _get_model_device(model: torch.nn.Module) -> str:
     return "unknown"
 
 
+def _cleanup_memory() -> None:
+    """Force garbage collection and clear CUDA cache to free memory from loading process."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+
 def _log_model_info(model_name: str, model: torch.nn.Module) -> None:
     """Log model info including device, precision, and memory usage."""
+    # Cleanup first to get accurate memory reading
+    _cleanup_memory()
+    
     pytorch_alloc, pytorch_res, vram_used, total = _get_gpu_memory_info()
     dtype_info = _get_model_dtype_info(model)
     dtype_str = _format_dtype_info(dtype_info)
