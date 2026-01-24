@@ -1,9 +1,13 @@
+import gc
+import logging
 from dataclasses import replace
 from typing import Any, Callable, Iterator, List, Tuple
 
 import torch
 from einops import rearrange
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 from ltx_core.model.common.normalization import PixelNorm
 from ltx_core.model.transformer.timestep_embedding import PixArtAlphaCombinedTimestepSizeEmbeddings
@@ -671,13 +675,24 @@ class VideoDecoder(nn.Module):
         tiles = self._prepare_tiles(latent, tiling_config)
 
         temporal_groups = self._group_tiles_by_temporal_slice(tiles)
+        total_temporal_groups = len(temporal_groups)
+        
+        def _log_vae_memory(stage: str) -> None:
+            if torch.cuda.is_available():
+                pytorch_alloc = torch.cuda.memory_allocated() / 1024**3
+                free, total = torch.cuda.mem_get_info()
+                vram_used = (total - free) / 1024**3
+                logger.info(f"  🎬 VAE [{stage}]: PyTorch={pytorch_alloc:.2f}GB, VRAM={vram_used:.2f}GB")
+        
+        logger.info(f"🎬 VAE tiled_decode: {total_temporal_groups} temporal groups, {len(tiles)} total tiles")
+        _log_vae_memory("start")
 
         # State for temporal overlap handling
         previous_chunk = None
         previous_weights = None
         previous_temporal_slice = None
 
-        for temporal_group_tiles in temporal_groups:
+        for group_idx, temporal_group_tiles in enumerate(temporal_groups):
             curr_temporal_slice = temporal_group_tiles[0].out_coords[2]
 
             # Calculate the shape of the temporal buffer for this group of tiles.
@@ -702,6 +717,12 @@ class VideoDecoder(nn.Module):
                 timestep=timestep,
                 generator=generator,
             )
+            
+            _log_vae_memory(f"temporal group {group_idx + 1}/{total_temporal_groups} ({len(temporal_group_tiles)} tiles)")
+            
+            # Force cleanup after each temporal group
+            gc.collect()
+            torch.cuda.empty_cache()
 
             # Blend with previous temporal chunk if it exists
             if previous_chunk is not None:

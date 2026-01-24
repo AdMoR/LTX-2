@@ -76,6 +76,62 @@ def log_gpu_memory(stage: str) -> None:
     logger.info(f"  💾 Memory [{stage}]: PyTorch={pytorch_alloc:.2f}GB, VRAM={vram_used:.2f}GB/{total:.2f}GB")
 
 
+class MemoryTracker:
+    """Track memory changes between stages."""
+    
+    def __init__(self) -> None:
+        self._last_pytorch: float = 0.0
+        self._last_vram: float = 0.0
+        self._initial_pytorch: float = 0.0
+        self._initial_vram: float = 0.0
+        self._initialized: bool = False
+    
+    def snapshot(self, stage: str, log: bool = True) -> tuple[float, float]:
+        """Take a memory snapshot and optionally log with delta from last snapshot."""
+        pytorch_alloc, pytorch_res, vram_used, total = get_gpu_memory_gb()
+        
+        if not self._initialized:
+            self._initial_pytorch = pytorch_alloc
+            self._initial_vram = vram_used
+            self._initialized = True
+        
+        delta_pytorch = pytorch_alloc - self._last_pytorch
+        delta_vram = vram_used - self._last_vram
+        total_delta_pytorch = pytorch_alloc - self._initial_pytorch
+        
+        if log:
+            delta_str = f"Δ={delta_pytorch:+.2f}GB" if self._last_pytorch > 0 else ""
+            total_str = f"(total Δ={total_delta_pytorch:+.2f}GB)" if self._last_pytorch > 0 else ""
+            logger.info(f"  💾 [{stage}] PyTorch={pytorch_alloc:.2f}GB {delta_str} {total_str}, VRAM={vram_used:.2f}GB/{total:.2f}GB")
+        
+        self._last_pytorch = pytorch_alloc
+        self._last_vram = vram_used
+        
+        return pytorch_alloc, vram_used
+    
+    def reset(self) -> None:
+        """Reset the tracker."""
+        self._last_pytorch = 0.0
+        self._last_vram = 0.0
+        self._initial_pytorch = 0.0
+        self._initial_vram = 0.0
+        self._initialized = False
+
+
+# Global memory tracker for easy access
+_memory_tracker = MemoryTracker()
+
+
+def log_memory_snapshot(stage: str) -> None:
+    """Log a memory snapshot with delta tracking."""
+    _memory_tracker.snapshot(stage)
+
+
+def reset_memory_tracker() -> None:
+    """Reset the global memory tracker."""
+    _memory_tracker.reset()
+
+
 def log_generation_stage(stage: str, tensors: dict[str, torch.Tensor | Any] | None = None) -> None:
     """
     Log a generation stage with optional tensor details.
@@ -183,6 +239,10 @@ def euler_denoising_loop(
         A pair ``(video_state, audio_state)`` containing the final video and
         audio latent states after completing the denoising loop.
     """
+    total_steps = len(sigmas) - 1
+    step_tracker = MemoryTracker()
+    step_tracker.snapshot(f"Denoising start (0/{total_steps})", log=True)
+    
     for step_idx, _ in enumerate(tqdm(sigmas[:-1])):
         denoised_video, denoised_audio = denoise_fn(video_state, audio_state, sigmas, step_idx)
 
@@ -196,6 +256,8 @@ def euler_denoising_loop(
         del denoised_video, denoised_audio
         gc.collect()
         torch.cuda.empty_cache()
+        
+        step_tracker.snapshot(f"Denoising step {step_idx + 1}/{total_steps} (σ={sigmas[step_idx]:.4f})", log=True)
 
     return (video_state, audio_state)
 
@@ -224,6 +286,9 @@ def gradient_estimating_euler_denoising_loop(
     tuple[LatentState, LatentState]
         See :func:`euler_denoising_loop` for return value description.
     """
+    total_steps = len(sigmas) - 1
+    step_tracker = MemoryTracker()
+    step_tracker.snapshot(f"GE Denoising start (0/{total_steps})", log=True)
 
     previous_audio_velocity = None
     previous_video_velocity = None
@@ -245,6 +310,7 @@ def gradient_estimating_euler_denoising_loop(
         denoised_audio = post_process_latent(denoised_audio, audio_state.denoise_mask, audio_state.clean_latent)
 
         if sigmas[step_idx + 1] == 0:
+            step_tracker.snapshot(f"GE Denoising step {step_idx + 1}/{total_steps} (final)", log=True)
             return replace(video_state, latent=denoised_video), replace(audio_state, latent=denoised_audio)
 
         previous_video_velocity, denoised_video = update_velocity_and_sample(
@@ -261,6 +327,8 @@ def gradient_estimating_euler_denoising_loop(
         del denoised_video, denoised_audio
         gc.collect()
         torch.cuda.empty_cache()
+        
+        step_tracker.snapshot(f"GE Denoising step {step_idx + 1}/{total_steps} (σ={sigmas[step_idx]:.4f})", log=True)
 
     return (video_state, audio_state)
 

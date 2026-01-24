@@ -22,6 +22,7 @@ from ltx_pipelines.utils.constants import (
     STAGE_2_DISTILLED_SIGMA_VALUES,
 )
 from ltx_pipelines.utils.helpers import (
+    MemoryTracker,
     assert_resolution,
     cleanup_memory,
     denoise_audio_video,
@@ -140,6 +141,10 @@ class DistilledPipeline:
     ) -> tuple[Iterator[torch.Tensor], torch.Tensor]:
         assert_resolution(height=height, width=width, is_two_stage=True)
 
+        # Initialize memory tracker for this generation
+        mem_tracker = MemoryTracker()
+        mem_tracker.snapshot("Pipeline start")
+
         generator = torch.Generator(device=self.device).manual_seed(seed)
         noiser = GaussianNoiser(generator=generator)
         stepper = EulerDiffusionStep()
@@ -154,6 +159,8 @@ class DistilledPipeline:
         video_decoder = models["video_decoder"]
         audio_decoder = models["audio_decoder"]
         vocoder = models["vocoder"]
+        
+        mem_tracker.snapshot("Models loaded")
 
         log_generation_stage("Starting generation")
 
@@ -166,12 +173,14 @@ class DistilledPipeline:
             "video_context": video_context,
             "audio_context": audio_context,
         })
+        mem_tracker.snapshot("Text encoding complete")
 
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del text_encoder
             cleanup_memory()
+            mem_tracker.snapshot("Text encoder cleanup")
 
         # Stage 1: Initial low resolution video generation.
         stage_1_sigmas = torch.Tensor(DISTILLED_SIGMA_VALUES).to(self.device)
@@ -223,6 +232,7 @@ class DistilledPipeline:
             "video_latent": video_state.latent,
             "audio_latent": audio_state.latent,
         })
+        mem_tracker.snapshot("Stage 1 denoising complete")
 
         # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
         upscaled_video_latent = upsample_video(
@@ -232,10 +242,12 @@ class DistilledPipeline:
         log_generation_stage("Spatial upsampling complete", {
             "upscaled_video_latent": upscaled_video_latent,
         })
+        mem_tracker.snapshot("Spatial upsampling complete")
 
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             cleanup_memory()
+            mem_tracker.snapshot("Upsampler cleanup")
 
         stage_2_sigmas = torch.Tensor(STAGE_2_DISTILLED_SIGMA_VALUES).to(self.device)
         stage_2_output_shape = VideoPixelShape(batch=1, frames=num_frames, width=width, height=height, fps=frame_rate)
@@ -266,6 +278,7 @@ class DistilledPipeline:
             "video_latent": video_state.latent,
             "audio_latent": audio_state.latent,
         })
+        mem_tracker.snapshot("Stage 2 denoising complete")
 
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
@@ -273,13 +286,16 @@ class DistilledPipeline:
             del transformer
             del video_encoder
             cleanup_memory()
+            mem_tracker.snapshot("Transformer cleanup")
 
         log_generation_stage("Starting VAE decode")
+        mem_tracker.snapshot("VAE decode start")
         decoded_video = vae_decode_video(video_state.latent, video_decoder, tiling_config)
-        log_generation_stage("Video VAE decode complete")
+        log_generation_stage("Video VAE decode iterator created")
 
         decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
         log_generation_stage("Audio decode complete")
+        mem_tracker.snapshot("Audio decode complete")
 
         return decoded_video, decoded_audio
 

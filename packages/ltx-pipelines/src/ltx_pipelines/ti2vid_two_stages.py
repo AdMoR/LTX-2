@@ -23,6 +23,7 @@ from ltx_pipelines.utils.constants import (
     STAGE_2_DISTILLED_SIGMA_VALUES,
 )
 from ltx_pipelines.utils.helpers import (
+    MemoryTracker,
     assert_resolution,
     cleanup_memory,
     denoise_audio_video,
@@ -167,6 +168,10 @@ class TI2VidTwoStagesPipeline:
     ) -> tuple[Iterator[torch.Tensor], torch.Tensor]:
         assert_resolution(height=height, width=width, is_two_stage=True)
 
+        # Initialize memory tracker for this generation
+        mem_tracker = MemoryTracker()
+        mem_tracker.snapshot("Pipeline start")
+
         generator = torch.Generator(device=self.device).manual_seed(seed)
         noiser = GaussianNoiser(generator=generator)
         stepper = EulerDiffusionStep()
@@ -183,6 +188,8 @@ class TI2VidTwoStagesPipeline:
         video_decoder = models["video_decoder"]
         audio_decoder = models["audio_decoder"]
         vocoder = models["vocoder"]
+        
+        mem_tracker.snapshot("Models loaded")
 
         log_generation_stage("Starting generation")
 
@@ -200,12 +207,14 @@ class TI2VidTwoStagesPipeline:
             "a_context_p": a_context_p,
             "a_context_n": a_context_n,
         })
+        mem_tracker.snapshot("Text encoding complete")
 
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del text_encoder
             cleanup_memory()
+            mem_tracker.snapshot("Text encoder cleanup")
 
         torch.cuda.synchronize()
         cleanup_memory()
@@ -262,11 +271,13 @@ class TI2VidTwoStagesPipeline:
             "video_latent": video_state.latent,
             "audio_latent": audio_state.latent,
         })
+        mem_tracker.snapshot("Stage 1 denoising complete")
 
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             del transformer_stage1
             cleanup_memory()
+            mem_tracker.snapshot("Stage 1 transformer cleanup")
 
         torch.cuda.synchronize()
         cleanup_memory()
@@ -281,10 +292,12 @@ class TI2VidTwoStagesPipeline:
         log_generation_stage("Spatial upsampling complete", {
             "upscaled_video_latent": upscaled_video_latent,
         })
+        mem_tracker.snapshot("Spatial upsampling complete")
 
         if not self._uses_shared_cache:
             torch.cuda.synchronize()
             cleanup_memory()
+            mem_tracker.snapshot("Upsampler cleanup")
 
         distilled_sigmas = torch.Tensor(STAGE_2_DISTILLED_SIGMA_VALUES).to(self.device)
 
@@ -331,6 +344,7 @@ class TI2VidTwoStagesPipeline:
             "video_latent": video_state.latent,
             "audio_latent": audio_state.latent,
         })
+        mem_tracker.snapshot("Stage 2 denoising complete")
 
         # Only cleanup if not using shared cache
         if not self._uses_shared_cache:
@@ -338,14 +352,16 @@ class TI2VidTwoStagesPipeline:
             del transformer_stage2
             del video_encoder
             cleanup_memory()
+            mem_tracker.snapshot("Stage 2 transformer cleanup")
 
         log_generation_stage("Starting VAE decode")
+        mem_tracker.snapshot("VAE decode start")
         decoded_video = vae_decode_video(video_state.latent, video_decoder, tiling_config)
-        log_generation_stage("Video VAE decode complete")
+        log_generation_stage("Video VAE decode iterator created")
 
         decoded_audio = vae_decode_audio(audio_state.latent, audio_decoder, vocoder)
         log_generation_stage("Audio decode complete")
-
+        mem_tracker.snapshot("Audio decode complete")
 
         return decoded_video, decoded_audio
 
