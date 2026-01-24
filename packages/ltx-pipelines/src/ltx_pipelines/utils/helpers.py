@@ -192,6 +192,11 @@ def euler_denoising_loop(
         video_state = replace(video_state, latent=stepper.step(video_state.latent, denoised_video, sigmas, step_idx))
         audio_state = replace(audio_state, latent=stepper.step(audio_state.latent, denoised_audio, sigmas, step_idx))
 
+        # Force cleanup to prevent memory accumulation across steps
+        del denoised_video, denoised_audio
+        gc.collect()
+        torch.cuda.empty_cache()
+
     return (video_state, audio_state)
 
 
@@ -251,6 +256,11 @@ def gradient_estimating_euler_denoising_loop(
 
         video_state = replace(video_state, latent=stepper.step(video_state.latent, denoised_video, sigmas, step_idx))
         audio_state = replace(audio_state, latent=stepper.step(audio_state.latent, denoised_audio, sigmas, step_idx))
+
+        # Force cleanup to prevent memory accumulation across steps
+        del denoised_video, denoised_audio
+        gc.collect()
+        torch.cuda.empty_cache()
 
     return (video_state, audio_state)
 
